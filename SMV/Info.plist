@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>remote-notification</string>
+	</array>
+	<key>NSCameraUsageDescription</key>
+	<string>SMV uses your camera for AI-powered face analysis to calculate your attractiveness scores.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Upload photos from your library for face analysis and to share on your feed.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Save your analysis results and share cards to your photo library.</string>
+</dict>
+</plist>
