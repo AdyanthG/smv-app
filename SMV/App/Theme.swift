@@ -283,12 +283,3 @@ extension View {
     }
 }
 
-// MARK: - Leaderboard Category
-
-enum LeaderboardCategory: String, CaseIterable {
-    case global = "Global"
-    case eyeArea = "Eye Area"
-    case jawline = "Jawline"
-    case symmetry = "Symmetry"
-    case harmony = "Harmony"
-}
