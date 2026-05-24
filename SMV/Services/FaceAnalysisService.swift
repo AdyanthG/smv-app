@@ -70,7 +70,7 @@ final class FaceAnalysisService {
         }
 
         guard let observation = request.results?.first,
-              let landmarks = observation.faceLandmarks else {
+              let landmarks = observation.landmarks else {
             errorMessage = "No face detected. Please try again with better lighting."
             return nil
         }
