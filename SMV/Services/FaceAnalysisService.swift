@@ -339,7 +339,7 @@ final class FaceAnalysisService {
         // Left gonion: ~25% from start of contour
         let leftGonionIdx = max(0, points.count / 5)
         // Right gonion: ~75% from start
-        let rightGonionIdx = min(points.count - 1, points.count * 4 / 5)
+        _ = min(points.count - 1, points.count * 4 / 5)
 
         // Use the left side for angle calculation
         let ramus = points[leftGonionIdx] // approximate gonion

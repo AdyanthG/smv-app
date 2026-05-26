@@ -117,7 +117,7 @@ struct ResultsView: View {
                 ForEach(result.attributes, id: \.name) { attr in
                     AttributeBar(
                         name: attr.name,
-                        icon: attr.icon,
+                        icon: iconFor(attr.name),
                         score: attr.score
                     )
                 }
@@ -195,6 +195,20 @@ struct ResultsView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
+        }
+    }
+
+    // MARK: - Icon Mapping
+
+    private func iconFor(_ name: String) -> String {
+        switch name {
+        case "Eye Area":      return "eye.fill"
+        case "Jawline":       return "shield.fill"
+        case "Symmetry":      return "arrow.left.and.right"
+        case "Harmony":       return "circle.hexagongrid.fill"
+        case "Proportions":   return "ruler.fill"
+        case "Skin Clarity":  return "sparkles"
+        default:              return "circle.fill"
         }
     }
 }
