@@ -1,0 +1,31 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // ── Scan Images ──
+    match /scans/{userId}/{scanFile} {
+      // Only the owner can upload their scan images
+      allow write: if request.auth != null
+        && request.auth.uid == userId
+        && request.resource.size < 10 * 1024 * 1024  // 10MB max
+        && request.resource.contentType.matches('image/.*');
+
+      // Only the owner can read their scans
+      allow read: if request.auth != null
+        && request.auth.uid == userId;
+    }
+
+    // ── Profile Photos ──
+    match /profiles/{userId}/{photoFile} {
+      // Only the owner can upload their profile photo
+      allow write: if request.auth != null
+        && request.auth.uid == userId
+        && request.resource.size < 5 * 1024 * 1024  // 5MB max
+        && request.resource.contentType.matches('image/.*');
+
+      // Anyone signed in can read profile photos (for feed/leaderboard)
+      allow read: if request.auth != null;
+    }
+  }
+}

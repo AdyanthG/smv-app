@@ -2,12 +2,14 @@
 //  AuthService.swift
 //  SMV
 //
-//  Authentication service — protocol-based for Firebase swap.
-//  Currently uses local/mock auth; swap implementation when
-//  GoogleService-Info.plist + Firebase SDK are added.
+//  Firebase Authentication service.
+//  Supports Sign in with Apple, anonymous/guest sign-in, and account management.
 //
 
 import SwiftUI
+import FirebaseAuth
+import AuthenticationServices
+import CryptoKit
 
 // MARK: - Auth State
 
@@ -33,11 +35,11 @@ final class AuthService {
     var isLoading = false
     var errorMessage: String?
 
-    // On-device auth for MVP — stores in UserDefaults
+    private var authStateListener: AuthStateDidChangeListenerHandle?
+    private var currentNonce: String?
+
+    // On-device prefs (onboarding flag)
     private let defaults = UserDefaults.standard
-    private let kUserId = "smv_user_id"
-    private let kDisplayName = "smv_display_name"
-    private let kEmail = "smv_email"
     private let kOnboarded = "smv_onboarded"
 
     var isOnboarded: Bool {
@@ -47,49 +49,149 @@ final class AuthService {
     // MARK: - Init
 
     init() {
-        restoreSession()
+        listenToAuthState()
     }
 
-    // MARK: - Session
-
-    func restoreSession() {
-        if let userId = defaults.string(forKey: kUserId) {
-            displayName = defaults.string(forKey: kDisplayName) ?? ""
-            email = defaults.string(forKey: kEmail) ?? ""
-            state = .signedIn(userId: userId)
-        } else {
-            state = .signedOut
+    deinit {
+        if let listener = authStateListener {
+            Auth.auth().removeStateDidChangeListener(listener)
         }
     }
 
-    // MARK: - Sign In (Local MVP)
+    // MARK: - Auth State Listener
 
-    func signInWithApple() async {
+    private func listenToAuthState() {
+        authStateListener = Auth.auth().addStateDidChangeListener { [weak self] _, user in
+            guard let self else { return }
+            if let user {
+                self.displayName = user.displayName ?? defaults.string(forKey: "smv_displayName") ?? ""
+                self.email = user.email ?? ""
+                self.avatarURL = user.photoURL?.absoluteString
+                self.state = .signedIn(userId: user.uid)
+            } else {
+                self.state = .signedOut
+            }
+        }
+    }
+
+    // MARK: - Sign In with Apple
+
+    /// Call this to get the ASAuthorization request configured for Firebase
+    func prepareAppleSignIn() -> ASAuthorizationAppleIDRequest {
+        let nonce = randomNonceString()
+        currentNonce = nonce
+
+        let request = ASAuthorizationAppleIDProvider().createRequest()
+        request.requestedScopes = [.fullName, .email]
+        request.nonce = sha256(nonce)
+        return request
+    }
+
+    /// Handle the Apple Sign In result
+    func handleAppleSignIn(result: Result<ASAuthorization, Error>) async {
         isLoading = true
         errorMessage = nil
-        // Simulate Apple Sign In — in production, use AuthenticationServices
-        try? await Task.sleep(for: .milliseconds(800))
-        let userId = UUID().uuidString
-        defaults.set(userId, forKey: kUserId)
-        defaults.set("SMV User", forKey: kDisplayName)
-        displayName = "SMV User"
-        state = .signedIn(userId: userId)
+
+        switch result {
+        case .success(let authorization):
+            guard let appleIDCredential = authorization.credential as? ASAuthorizationAppleIDCredential,
+                  let appleIDToken = appleIDCredential.identityToken,
+                  let idTokenString = String(data: appleIDToken, encoding: .utf8),
+                  let nonce = currentNonce else {
+                errorMessage = "Apple Sign In failed — invalid credentials"
+                isLoading = false
+                return
+            }
+
+            let credential = OAuthProvider.appleCredential(
+                withIDToken: idTokenString,
+                rawNonce: nonce,
+                fullName: appleIDCredential.fullName
+            )
+
+            do {
+                let authResult = try await Auth.auth().signIn(with: credential)
+
+                // Store display name if Apple provided it (only on first sign-in)
+                if let fullName = appleIDCredential.fullName {
+                    let name = [fullName.givenName, fullName.familyName]
+                        .compactMap { $0 }
+                        .joined(separator: " ")
+                    if !name.isEmpty {
+                        let changeRequest = authResult.user.createProfileChangeRequest()
+                        changeRequest.displayName = name
+                        try? await changeRequest.commitChanges()
+                        displayName = name
+                        defaults.set(name, forKey: "smv_displayName")
+                    }
+                }
+
+                state = .signedIn(userId: authResult.user.uid)
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+
+        case .failure(let error):
+            errorMessage = error.localizedDescription
+        }
+
         isLoading = false
     }
 
+    // MARK: - Sign In with Apple (Simple async — for onboarding)
+
+    func signInWithApple() async {
+        // This is called from the onboarding view which uses SignInWithAppleButton
+        // The actual auth is handled via prepareAppleSignIn + handleAppleSignIn
+        // This method exists for backward compatibility with views that call it directly
+        isLoading = true
+        errorMessage = nil
+
+        // If no Firebase user yet, sign in anonymously as fallback
+        if Auth.auth().currentUser == nil {
+            do {
+                let result = try await Auth.auth().signInAnonymously()
+                displayName = "User"
+                defaults.set("User", forKey: "smv_displayName")
+                state = .signedIn(userId: result.user.uid)
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+
+        isLoading = false
+    }
+
+    // MARK: - Guest Sign In (Anonymous)
+
     func signInAsGuest() {
-        let userId = "guest_\(UUID().uuidString.prefix(8))"
-        defaults.set(userId, forKey: kUserId)
-        defaults.set("Guest", forKey: kDisplayName)
-        displayName = "Guest"
-        state = .signedIn(userId: userId)
+        Task {
+            isLoading = true
+            do {
+                let result = try await Auth.auth().signInAnonymously()
+                displayName = "Guest"
+                defaults.set("Guest", forKey: "smv_displayName")
+                state = .signedIn(userId: result.user.uid)
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+            isLoading = false
+        }
     }
 
     // MARK: - Profile Setup
 
     func completeProfileSetup(name: String, handle: String) {
-        defaults.set(name, forKey: kDisplayName)
+        defaults.set(name, forKey: "smv_displayName")
+        defaults.set(handle, forKey: "smv_handle")
         displayName = name
+
+        // Update Firebase profile
+        if let user = Auth.auth().currentUser {
+            let changeRequest = user.createProfileChangeRequest()
+            changeRequest.displayName = name
+            changeRequest.commitChanges(completion: nil)
+        }
     }
 
     func completeOnboarding() {
@@ -99,26 +201,54 @@ final class AuthService {
     // MARK: - Sign Out
 
     func signOut() {
-        defaults.removeObject(forKey: kUserId)
-        defaults.removeObject(forKey: kDisplayName)
-        defaults.removeObject(forKey: kEmail)
-        displayName = ""
-        email = ""
-        state = .signedOut
+        do {
+            try Auth.auth().signOut()
+            displayName = ""
+            email = ""
+            avatarURL = nil
+            state = .signedOut
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 
     // MARK: - Delete Account
 
     func deleteAccount() async {
         isLoading = true
-        try? await Task.sleep(for: .milliseconds(500))
-        defaults.removeObject(forKey: kUserId)
-        defaults.removeObject(forKey: kDisplayName)
-        defaults.removeObject(forKey: kEmail)
-        defaults.removeObject(forKey: kOnboarded)
-        displayName = ""
-        email = ""
-        state = .signedOut
+
+        do {
+            try await Auth.auth().currentUser?.delete()
+            defaults.removeObject(forKey: "smv_displayName")
+            defaults.removeObject(forKey: "smv_handle")
+            defaults.removeObject(forKey: kOnboarded)
+            displayName = ""
+            email = ""
+            avatarURL = nil
+            state = .signedOut
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+
         isLoading = false
+    }
+
+    // MARK: - Apple Sign In Helpers
+
+    private func randomNonceString(length: Int = 32) -> String {
+        precondition(length > 0)
+        var randomBytes = [UInt8](repeating: 0, count: length)
+        let errorCode = SecRandomCopyBytes(kSecRandomDefault, randomBytes.count, &randomBytes)
+        guard errorCode == errSecSuccess else {
+            fatalError("Unable to generate nonce. SecRandomCopyBytes failed with OSStatus \(errorCode)")
+        }
+        let charset: [Character] = Array("0123456789ABCDEFGHIJKLMNOPQRSTUVXYZabcdefghijklmnopqrstuvwxyz-._")
+        return String(randomBytes.map { charset[Int($0) % charset.count] })
+    }
+
+    private func sha256(_ input: String) -> String {
+        let inputData = Data(input.utf8)
+        let hashedData = SHA256.hash(data: inputData)
+        return hashedData.compactMap { String(format: "%02x", $0) }.joined()
     }
 }

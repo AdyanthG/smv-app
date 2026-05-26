@@ -4,14 +4,29 @@
 //
 //  Created by Adyanth Ganesh on 5/14/26.
 //
-//  Main entry point — sets up data persistence, routing, and the root view.
+//  Main entry point — Firebase init, data persistence, routing, root view.
 //
 
 import SwiftUI
 import SwiftData
+import FirebaseCore
+
+// Firebase app delegate for initialization
+class AppDelegate: NSObject, UIApplicationDelegate {
+    func application(
+        _ application: UIApplication,
+        didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
+    ) -> Bool {
+        FirebaseApp.configure()
+        return true
+    }
+}
 
 @main
 struct SMVApp: App {
+
+    // Register the Firebase app delegate
+    @UIApplicationDelegateAdaptor(AppDelegate.self) var delegate
 
     // ── SwiftData ──
     var sharedModelContainer: ModelContainer = {
