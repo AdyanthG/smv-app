@@ -46,8 +46,8 @@ enum ScanPosition: Int, CaseIterable {
     var targetYaw: Double {
         switch self {
         case .front: return 0
-        case .left:  return 0.25    // ~14 degrees left
-        case .right: return -0.25   // ~14 degrees right
+        case .left:  return 0.20    // ~11 degrees left — gentle turn
+        case .right: return -0.20   // ~11 degrees right
         case .up:    return 0
         case .down:  return 0
         }
@@ -58,23 +58,24 @@ enum ScanPosition: Int, CaseIterable {
         case .front: return 0
         case .left:  return 0
         case .right: return 0
-        case .up:    return 0.22    // ~12 degrees chin up
-        case .down:  return -0.22   // ~12 degrees chin down
+        case .up:    return 0.18    // ~10 degrees chin up
+        case .down:  return -0.18   // ~10 degrees chin down
         }
     }
 
     /// Tolerance in radians for considering the position "aligned"
+    /// Very generous — we just need roughly the right direction, not precision
     var yawTolerance: Double {
         switch self {
-        case .front: return 0.18    // ~10 degrees — slightly tighter to prevent off-angle frontal
-        default:     return 0.25    // ~14 degrees — generous for side/up/down
+        case .front: return 0.22    // ~12.5 degrees
+        default:     return 0.35    // ~20 degrees — very forgiving
         }
     }
 
     var pitchTolerance: Double {
         switch self {
-        case .front: return 0.15    // ~8.5 degrees — tight to prevent tilted frontal captures
-        default:     return 0.25    // ~14 degrees — generous for side/up/down
+        case .front: return 0.20    // ~11.5 degrees
+        default:     return 0.35    // ~20 degrees — very forgiving
         }
     }
 }
@@ -329,14 +330,14 @@ extension FaceTrackingService: ARSessionDelegate {
         isFaceDetected = true
         lastFaceAnchor = faceAnchor
 
-        // Extract Euler angles from the face transform
-        let transform = faceAnchor.transform
-        // Yaw: rotation around Y axis (left/right turn)
-        currentYaw = Double(atan2(transform.columns.0.z, transform.columns.2.z))
-        // Pitch: rotation around X axis (up/down nod)
-        currentPitch = Double(asin(-transform.columns.1.z))
-        // Roll: rotation around Z axis (head tilt)
-        currentRoll = Double(atan2(transform.columns.1.x, transform.columns.1.y))
+        // Extract Euler angles using SCNNode — the only reliable way.
+        // Manual matrix decomposition is error-prone with ARKit's coordinate system.
+        let node = SCNNode()
+        node.simdTransform = faceAnchor.transform
+        // SCNNode.eulerAngles: x=pitch, y=yaw, z=roll
+        currentPitch = Double(node.eulerAngles.x)
+        currentYaw = Double(node.eulerAngles.y)
+        currentRoll = Double(node.eulerAngles.z)
     }
 
     func session(_ session: ARSession, didRemove anchors: [ARAnchor]) {
