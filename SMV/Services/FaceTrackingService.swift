@@ -98,7 +98,8 @@ final class FaceTrackingService: NSObject {
 
     // ── AR Session ──
     let arSession = ARSession()
-    private var arView: ARSCNView?
+    /// Set by ARViewContainer so we can use snapshot() for captures
+    weak var arView: ARSCNView?
     private var alignedSince: Date?
     private let requiredHoldDuration: TimeInterval = 0.8 // seconds to hold position
     private var displayLink: CADisplayLink?
@@ -187,9 +188,16 @@ final class FaceTrackingService: NSObject {
         // Prevent double-capture
         guard !captures.contains(where: { $0.position == currentPosition }) else { return }
 
-        // Capture the current frame as an image
-        guard let frame = arSession.currentFrame else { return }
-        let image = imageFromPixelBuffer(frame.capturedImage)
+        // Capture using ARSCNView snapshot (exact on-screen image, correct orientation)
+        // Falls back to pixel buffer conversion if arView is unavailable
+        let image: UIImage
+        if let arView = arView {
+            image = arView.snapshot()
+        } else if let frame = arSession.currentFrame {
+            image = imageFromPixelBuffer(frame.capturedImage)
+        } else {
+            return
+        }
 
         let capture = AngleCapture(
             position: currentPosition,
@@ -291,8 +299,9 @@ final class FaceTrackingService: NSObject {
         guard let cgImage = context.createCGImage(ciImage, from: ciImage.extent) else {
             return UIImage()
         }
-        // Front camera captures are mirrored, rotate to match
-        return UIImage(cgImage: cgImage, scale: 1.0, orientation: .upMirrored)
+        // Front TrueDepth camera in portrait: sensor is landscape-left,
+        // so the buffer needs .rightMirrored (rotate right + mirror for front cam)
+        return UIImage(cgImage: cgImage, scale: 1.0, orientation: .rightMirrored)
     }
 }
 

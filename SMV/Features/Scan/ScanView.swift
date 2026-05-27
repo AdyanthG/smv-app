@@ -93,7 +93,11 @@ struct ScanView: View {
             VStack(spacing: SMVSpacing.lg) {
                 GradientButton(title: "Start Scan", icon: "camera.fill") {
                     haptics.mediumImpact()
-                    viewModel.startScan()
+                    viewModel.startScan(
+                        userId: auth.currentUserId,
+                        firestore: firestore,
+                        storage: storage
+                    )
                 }
             }
             .padding(.horizontal, SMVSpacing.xxl)
@@ -126,7 +130,7 @@ struct ScanView: View {
     private var guidedScanView: some View {
         ZStack {
             // AR Camera preview
-            ARViewContainer(session: viewModel.faceTracker.arSession)
+            ARViewContainer(session: viewModel.faceTracker.arSession, faceTracker: viewModel.faceTracker)
                 .ignoresSafeArea()
 
             // Ring light overlay
@@ -460,7 +464,11 @@ struct ScanView: View {
                     }
 
                     SecondaryButton(title: "Retake Photo", icon: "arrow.counterclockwise") {
-                        viewModel.startScan()
+                        viewModel.startScan(
+                            userId: auth.currentUserId,
+                            firestore: firestore,
+                            storage: storage
+                        )
                     }
                 }
                 .padding(.horizontal, SMVSpacing.xxl)
@@ -554,14 +562,16 @@ struct ScanView: View {
 
 struct ARViewContainer: UIViewRepresentable {
     let session: ARSession
+    let faceTracker: FaceTrackingService
 
     func makeUIView(context: Context) -> ARSCNView {
         let arView = ARSCNView()
         arView.session = session
         arView.automaticallyUpdatesLighting = true
-        // Show camera feed, no debug overlays
         arView.scene = SCNScene()
         arView.rendersContinuously = true
+        // Wire so FaceTrackingService can use snapshot() for image capture
+        faceTracker.arView = arView
         return arView
     }
 

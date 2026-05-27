@@ -94,9 +94,13 @@ final class ScanViewModel: NSObject, AVCapturePhotoCaptureDelegate {
 
     // MARK: - Start Scan (chooses mode)
 
-    func startScan() {
+    func startScan(
+        userId: String? = nil,
+        firestore: FirestoreService? = nil,
+        storage: StorageService? = nil
+    ) {
         if isTrueDepthAvailable {
-            startGuidedScan()
+            startGuidedScan(userId: userId, firestore: firestore, storage: storage)
         } else {
             startCamera()
         }
@@ -104,7 +108,21 @@ final class ScanViewModel: NSObject, AVCapturePhotoCaptureDelegate {
 
     // MARK: - Guided Scan (TrueDepth)
 
-    func startGuidedScan() {
+    /// Store references so guided scan auto-analyze can use them
+    private var guidedUserId: String?
+    private var guidedFirestore: FirestoreService?
+    private var guidedStorage: StorageService?
+
+    func startGuidedScan(
+        userId: String? = nil,
+        firestore: FirestoreService? = nil,
+        storage: StorageService? = nil
+    ) {
+        // Store refs for auto-analyze after capture completes
+        guidedUserId = userId
+        guidedFirestore = firestore
+        guidedStorage = storage
+
         faceTracker.reset()
         faceTracker.onCaptureComplete = { [weak self] captures in
             Task { @MainActor in
@@ -127,7 +145,18 @@ final class ScanViewModel: NSObject, AVCapturePhotoCaptureDelegate {
         }
         // Store captures for depth metric extraction during analysis
         self.pendingCaptures = captures
-        state = .photoSelected(frontalCapture.image)
+
+        // Auto-analyze — skip preview step for seamless UX
+        let image = frontalCapture.image
+        let userId = guidedUserId ?? "local_user"
+        Task {
+            await analyzeImage(
+                image,
+                userId: userId,
+                firestore: guidedFirestore,
+                storage: guidedStorage
+            )
+        }
     }
 
     var pendingCaptures: [AngleCapture]?
