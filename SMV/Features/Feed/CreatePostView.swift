@@ -12,9 +12,13 @@ struct CreatePostView: View {
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
+    @Environment(AuthService.self) private var auth
+    @Environment(FirestoreService.self) private var firestore
+    @Environment(HapticService.self) private var haptics
     @State private var caption: String = ""
     @State private var selectedHashtags: Set<String> = []
     @State private var attachScanResult: Bool = true
+    @State private var isPosting = false
 
     private let suggestedHashtags = [
         "looksmaxxing", "glowup", "smvcheck", "mewing",
@@ -131,21 +135,41 @@ struct CreatePostView: View {
                     Button("Post") { createPost() }
                         .foregroundStyle(Color.smvCyan)
                         .fontWeight(.semibold)
-                        .disabled(caption.isEmpty)
+                        .disabled(caption.isEmpty || isPosting)
                 }
             }
         }
     }
 
     private func createPost() {
+        isPosting = true
+        haptics.mediumImpact()
+
+        let userId = auth.currentUserId ?? "local_user"
+        let name = auth.displayName.isEmpty ? "You" : auth.displayName
+        let handle = UserDefaults.standard.string(forKey: "smv_handle") ?? "user"
+
+        // Save locally
         let post = Post(
-            authorId: "local_user",
-            authorName: UserDefaults.standard.string(forKey: "smv_displayName") ?? "You",
-            authorHandle: UserDefaults.standard.string(forKey: "smv_handle") ?? "user",
+            authorId: userId,
+            authorName: name,
+            authorHandle: handle,
             caption: caption,
             hashtags: Array(selectedHashtags)
         )
         modelContext.insert(post)
+
+        // Save to Firestore (fire-and-forget)
+        Task {
+            let _ = await firestore.savePost(
+                authorId: userId,
+                authorName: name,
+                authorHandle: handle,
+                caption: caption,
+                hashtags: Array(selectedHashtags)
+            )
+        }
+
         dismiss()
     }
 }

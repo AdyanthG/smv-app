@@ -28,10 +28,10 @@ final class SubscriptionManager {
     var isPro: Bool { currentTier == .pro || currentTier == .elite }
     var isElite: Bool { currentTier == .elite }
 
-    // Product IDs — match your StoreKit config
-    static let proMonthlyId = "com.adyanth.SMV.pro.monthly"
-    static let proYearlyId = "com.adyanth.SMV.pro.yearly"
-    static let eliteMonthlyId = "com.adyanth.SMV.elite.monthly"
+    // Product IDs — match SMVProducts.storekit
+    static let proMonthlyId = "smv.pro.monthly"
+    static let proYearlyId = "smv.pro.yearly"
+    static let eliteMonthlyId = "smv.elite.monthly"
 
     // MARK: - Load Products
 
@@ -116,12 +116,11 @@ final class SubscriptionManager {
 
     // MARK: - Feature Gates
 
-    func canScan(monthlyCount: Int) -> Bool {
-        if isPro { return true }
-        return monthlyCount < 3 // Free tier: 3 scans/month
-    }
+    /// Scans are unlimited for all tiers
+    func canScan(monthlyCount: Int) -> Bool { true }
 
-    var canPostToForum: Bool { isPro }
     var canViewDetailedBreakdown: Bool { isPro }
+    var canViewTrends: Bool { isPro }
+    var canShareCleanCards: Bool { isPro }
     var canAccessAICoach: Bool { isElite }
 }

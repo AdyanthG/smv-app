@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import AuthenticationServices
 
 struct OnboardingView: View {
 
@@ -79,19 +80,32 @@ struct OnboardingView: View {
                     // CTA
                     if currentPage == pages.count - 1 {
                         VStack(spacing: SMVSpacing.md) {
-                            GradientButton(title: "Get Started", icon: "arrow.right") {
-                                haptics.success()
-                                auth.completeOnboarding()
-                                router.dismiss()
+                            // Primary: Sign in with Apple (real auth)
+                            SignInWithAppleButton(.signIn) { request in
+                                let _ = auth.prepareAppleSignIn()
+                                request.requestedScopes = [.fullName, .email]
+                            } onCompletion: { result in
+                                Task {
+                                    await auth.handleAppleSignIn(result: result)
+                                    auth.completeOnboarding()
+                                    router.dismiss()
+                                }
                             }
+                            .signInWithAppleButtonStyle(.white)
+                            .frame(height: 50)
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
 
-                            Button("Sign in with Apple") {
-                                Task { await auth.signInWithApple() }
+                            // Secondary: Continue as guest
+                            Button {
+                                haptics.success()
+                                auth.signInAsGuest()
                                 auth.completeOnboarding()
                                 router.dismiss()
+                            } label: {
+                                Text("Continue as Guest")
+                                    .font(SMVFont.caption())
+                                    .foregroundStyle(Color.smvTextSecondary)
                             }
-                            .font(SMVFont.caption())
-                            .foregroundStyle(Color.smvTextSecondary)
                         }
                     } else {
                         GradientButton(title: "Next", icon: "arrow.right") {

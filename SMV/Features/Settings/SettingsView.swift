@@ -90,11 +90,11 @@ struct SettingsView: View {
 
             // Legal
             Section {
-                Link(destination: URL(string: "https://smv.app/privacy")!) {
+                NavigationLink(value: Router.Destination.privacyPolicy) {
                     Label("Privacy Policy", systemImage: "lock.shield.fill")
                         .foregroundStyle(.white)
                 }
-                Link(destination: URL(string: "https://smv.app/terms")!) {
+                NavigationLink(value: Router.Destination.termsOfService) {
                     Label("Terms of Service", systemImage: "doc.text.fill")
                         .foregroundStyle(.white)
                 }

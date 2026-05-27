@@ -41,6 +41,10 @@ struct MainTabView: View {
                             ScoreProgressView()
                         case .referrals:
                             ReferralView()
+                        case .privacyPolicy:
+                            PrivacyPolicyView()
+                        case .termsOfService:
+                            TermsOfServiceView()
                         }
                     }
             }

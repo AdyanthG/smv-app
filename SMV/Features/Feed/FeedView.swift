@@ -2,7 +2,7 @@
 //  FeedView.swift
 //  SMV
 //
-//  Social feed with trending/following/new tabs and mock data.
+//  Social feed with Firestore-backed posts, pull-to-refresh, and empty states.
 //
 
 import SwiftUI
@@ -12,27 +12,42 @@ struct FeedView: View {
 
     @State private var selectedTab: FeedTab = .trending
     @State private var posts: [Post] = []
+    @State private var isLoading = false
     @Environment(Router.self) private var router
+    @Environment(FirestoreService.self) private var firestore
+    @Environment(\.modelContext) private var modelContext
 
     var body: some View {
         VStack(spacing: 0) {
             feedTabBar
 
-            ScrollView {
-                LazyVStack(spacing: 0) {
-                    ForEach(posts) { post in
-                        Button {
-                            router.push(.postDetail(postId: post.id))
-                        } label: {
-                            PostCardView(post: post)
-                        }
-                        .buttonStyle(.plain)
+            if isLoading && posts.isEmpty {
+                Spacer()
+                ProgressView()
+                    .tint(Color.smvCyan)
+                Spacer()
+            } else if posts.isEmpty {
+                emptyState
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        ForEach(posts) { post in
+                            Button {
+                                router.push(.postDetail(postId: post.id))
+                            } label: {
+                                PostCardView(post: post)
+                            }
+                            .buttonStyle(.plain)
 
-                        Divider()
-                            .overlay(Color.smvSurface2)
+                            Divider()
+                                .overlay(Color.smvSurface2)
+                        }
                     }
+                    .padding(.bottom, 100)
                 }
-                .padding(.bottom, 100)
+                .refreshable {
+                    await loadPosts()
+                }
             }
         }
         .background(Color.smvBackground)
@@ -41,7 +56,6 @@ struct FeedView: View {
         .toolbarColorScheme(.dark, for: .navigationBar)
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
-                // Easter egg: ".org" → hidden forum entry
                 Button {
                     router.push(.community)
                 } label: {
@@ -60,10 +74,55 @@ struct FeedView: View {
                 }
             }
         }
-        .onAppear {
-            if posts.isEmpty { loadMockPosts() }
+        .task {
+            if posts.isEmpty {
+                await loadPosts()
+            }
         }
     }
+
+    // MARK: - Empty State
+
+    private var emptyState: some View {
+        VStack(spacing: SMVSpacing.lg) {
+            Spacer()
+
+            Image(systemName: "square.stack.3d.up.slash")
+                .font(.system(size: 48))
+                .foregroundStyle(Color.smvTextTertiary)
+
+            Text("No Posts Yet")
+                .font(SMVFont.headline())
+                .foregroundStyle(.white)
+
+            Text("Be the first to share your journey.\nTap + to create a post.")
+                .font(SMVFont.body())
+                .foregroundStyle(Color.smvTextSecondary)
+                .multilineTextAlignment(.center)
+
+            Button {
+                router.present(.createPost)
+            } label: {
+                HStack(spacing: SMVSpacing.sm) {
+                    Image(systemName: "plus")
+                    Text("Create Post")
+                }
+                .font(SMVFont.title())
+                .foregroundStyle(.white)
+                .padding(.horizontal, SMVSpacing.xxl)
+                .padding(.vertical, SMVSpacing.md)
+                .background(
+                    Capsule()
+                        .fill(LinearGradient.brandPrimary)
+                )
+            }
+
+            Spacer()
+        }
+        .padding(.horizontal, SMVSpacing.xxl)
+    }
+
+    // MARK: - Tab Bar
 
     private var feedTabBar: some View {
         HStack(spacing: 0) {
@@ -91,33 +150,38 @@ struct FeedView: View {
         .padding(.horizontal, SMVSpacing.lg)
     }
 
-    private func loadMockPosts() {
-        posts = [
-            Post(authorId: "1", authorName: "Alex Chen", authorHandle: "alexmaxx",
-                 authorScore: 8.7, imageURL: "placeholder",
-                 caption: "3 months of mewing + skincare routine. The jawline is coming in 🔥",
-                 hashtags: ["jawline", "softmaxxing", "progress"],
-                 likeCount: 342, commentCount: 56,
-                 createdAt: Date.now.addingTimeInterval(-3600), scoreChange: 0.4),
-            Post(authorId: "2", authorName: "Jordan K", authorHandle: "jk_ascend",
-                 authorScore: 7.9, imageURL: "placeholder",
-                 caption: "New scan after starting retinol. Skin clarity went up significantly 📈",
-                 hashtags: ["skincare", "retinol", "glowup"],
-                 likeCount: 218, commentCount: 34,
-                 createdAt: Date.now.addingTimeInterval(-7200), scoreChange: 0.3),
-            Post(authorId: "3", authorName: "Marcus W", authorHandle: "psl_king",
-                 authorScore: 9.1, imageURL: "placeholder",
-                 caption: "Hit diamond tier today. It's been a journey. AMA in the comments 💎",
-                 hashtags: ["elite", "diamondtier", "looksmaxxing"],
-                 likeCount: 891, commentCount: 127, isLiked: true,
-                 createdAt: Date.now.addingTimeInterval(-14400)),
-            Post(authorId: "4", authorName: "Riley M", authorHandle: "riley_glow",
-                 authorScore: 6.8,
-                 caption: "Day 1 of taking this seriously. Posting for accountability. Let's go 💪",
-                 hashtags: ["day1", "accountability", "softmaxxing"],
-                 likeCount: 156, commentCount: 89,
-                 createdAt: Date.now.addingTimeInterval(-28800)),
-        ]
+    // MARK: - Data Loading
+
+    private func loadPosts() async {
+        isLoading = true
+
+        // Fetch from Firestore
+        let firestorePosts = await firestore.fetchFeedPosts(limit: 30)
+
+        if !firestorePosts.isEmpty {
+            // Convert Firestore documents to Post objects
+            posts = firestorePosts.compactMap { data in
+                guard let authorId = data["authorId"] as? String,
+                      let authorName = data["authorName"] as? String,
+                      let authorHandle = data["authorHandle"] as? String else {
+                    return nil
+                }
+                return Post(
+                    id: data["id"] as? String ?? UUID().uuidString,
+                    authorId: authorId,
+                    authorName: authorName,
+                    authorHandle: authorHandle,
+                    authorScore: data["authorScore"] as? Double,
+                    caption: data["caption"] as? String ?? "",
+                    hashtags: data["hashtags"] as? [String] ?? [],
+                    likeCount: data["likeCount"] as? Int ?? 0,
+                    commentCount: data["commentCount"] as? Int ?? 0
+                )
+            }
+        }
+        // If Firestore is empty, posts stays empty → shows empty state
+
+        isLoading = false
     }
 }
 
@@ -131,5 +195,6 @@ enum FeedTab: String, CaseIterable, Identifiable {
 #Preview {
     NavigationStack { FeedView() }
         .environment(Router())
+        .environment(FirestoreService())
         .modelContainer(for: Post.self, inMemory: true)
 }

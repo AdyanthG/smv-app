@@ -62,6 +62,8 @@ final class Router {
         case community
         case progress
         case referrals
+        case privacyPolicy
+        case termsOfService
     }
 
     // ── Modal Sheets ──
