@@ -56,6 +56,8 @@ struct SMVApp: App {
     @State private var haptics = HapticService()
     @State private var auth = AuthService()
     @State private var subscriptions = SubscriptionManager()
+    @State private var firestore = FirestoreService()
+    @State private var storage = StorageService()
 
     var body: some Scene {
         WindowGroup {
@@ -64,6 +66,8 @@ struct SMVApp: App {
                 .environment(haptics)
                 .environment(auth)
                 .environment(subscriptions)
+                .environment(firestore)
+                .environment(storage)
                 .preferredColorScheme(.dark)
                 .task {
                     await subscriptions.updateSubscriptionStatus()

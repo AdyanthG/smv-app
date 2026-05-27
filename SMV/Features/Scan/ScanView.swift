@@ -14,6 +14,9 @@ struct ScanView: View {
     @State private var viewModel = ScanViewModel()
     @Environment(Router.self) private var router
     @Environment(HapticService.self) private var haptics
+    @Environment(AuthService.self) private var auth
+    @Environment(FirestoreService.self) private var firestore
+    @Environment(StorageService.self) private var storage
     @Environment(\.modelContext) private var modelContext
 
     var body: some View {
@@ -207,7 +210,12 @@ struct ScanView: View {
                     GradientButton(title: "Analyze Face", icon: "bolt.fill") {
                         haptics.mediumImpact()
                         Task {
-                            await viewModel.analyzeImage(image, userId: "local_user")
+                            await viewModel.analyzeImage(
+                                image,
+                                userId: auth.currentUserId ?? "local_user",
+                                firestore: firestore,
+                                storage: storage
+                            )
                         }
                     }
 

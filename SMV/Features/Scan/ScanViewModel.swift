@@ -141,7 +141,12 @@ final class ScanViewModel: NSObject, AVCapturePhotoCaptureDelegate {
 
     // MARK: - Analysis
 
-    func analyzeImage(_ image: UIImage, userId: String) async {
+    func analyzeImage(
+        _ image: UIImage,
+        userId: String,
+        firestore: FirestoreService? = nil,
+        storage: StorageService? = nil
+    ) async {
         state = .analyzing
 
         let progressTask = Task { @MainActor in
@@ -156,6 +161,23 @@ final class ScanViewModel: NSObject, AVCapturePhotoCaptureDelegate {
             withAnimation(.spring(duration: 0.3)) {
                 analysisProgress = 1.0
             }
+
+            // ── Cloud sync (fire-and-forget) ──
+            if let firestore, let storage {
+                Task {
+                    // Upload scan image
+                    if let imageData = image.jpegData(compressionQuality: 0.7) {
+                        let _ = await storage.uploadScanImage(
+                            userId: userId,
+                            scanId: result.id,
+                            imageData: imageData
+                        )
+                    }
+                    // Save result to Firestore
+                    let _ = await firestore.saveScanResult(userId: userId, result: result)
+                }
+            }
+
             try? await Task.sleep(for: .milliseconds(500))
             state = .complete(result)
         } else {
