@@ -89,37 +89,37 @@ final class FaceAnalysisService {
 
     private struct Ideals {
         // FWHR: "Among attractive men, ratios ranging from 1.9 to 2.05"
-        static let fwhrRange: ClosedRange<Double> = 1.90...2.05
-        static let fwhrAcceptable: ClosedRange<Double> = 1.75...2.15
+        static let fwhrRange: ClosedRange<Double> = 1.85...2.10
+        static let fwhrAcceptable: ClosedRange<Double> = 1.65...2.25
 
         // Canthal Tilt: "ideal falls within 5-7 degrees, slightly positive"
-        static let canthalRange: ClosedRange<Double> = 5.0...7.0
-        static let canthalAcceptable: ClosedRange<Double> = 2.0...10.0
+        static let canthalRange: ClosedRange<Double> = 4.0...8.0
+        static let canthalAcceptable: ClosedRange<Double> = 0.0...12.0
 
         // Gonial Angle: "optimal 112-123 degrees, up to 126 acceptable, >130 undesirable"
-        static let gonialRange: ClosedRange<Double> = 112.0...123.0
-        static let gonialAcceptable: ClosedRange<Double> = 108.0...130.0
+        static let gonialRange: ClosedRange<Double> = 110.0...125.0
+        static let gonialAcceptable: ClosedRange<Double> = 105.0...135.0
 
         // Facial Thirds: equal = 0 deviation
         static let thirdsMaxDeviation: Double = 0.05
 
-        // IPD: typical attractive ratio
-        static let ipdRange: ClosedRange<Double> = 0.42...0.48
+        // IPD: typical attractive ratio (widened for 2D landmark noise)
+        static let ipdRange: ClosedRange<Double> = 0.40...0.50
 
-        // Eye Aspect Ratio: almond shape
-        static let eyeAspectRange: ClosedRange<Double> = 0.28...0.38
+        // Eye Aspect Ratio: almond shape (widened)
+        static let eyeAspectRange: ClosedRange<Double> = 0.25...0.40
 
-        // Nose Width: "should fit between the eyes"
-        static let noseWidthRange: ClosedRange<Double> = 0.22...0.28
+        // Nose Width: "should fit between the eyes" (widened)
+        static let noseWidthRange: ClosedRange<Double> = 0.20...0.30
 
-        // Lip fullness
-        static let lipRange: ClosedRange<Double> = 0.30...0.40
+        // Lip fullness (widened)
+        static let lipRange: ClosedRange<Double> = 0.25...0.45
 
-        // Philtrum-to-chin
-        static let philtrumRange: ClosedRange<Double> = 0.28...0.35
+        // Philtrum-to-chin (widened)
+        static let philtrumRange: ClosedRange<Double> = 0.25...0.38
 
-        // Symmetry: >92% is good
-        static let symmetryThreshold: Double = 0.92
+        // Symmetry: >90% is good
+        static let symmetryThreshold: Double = 0.90
     }
 
     // MARK: - Weights (Eye area + jaw = highest impact, per "Eyes are the prize" / "Jaw is law")
@@ -157,19 +157,19 @@ final class FaceAnalysisService {
             value: canthalTilt,
             ideal: Ideals.canthalRange,
             acceptable: Ideals.canthalAcceptable,
-            penalty: 2.0 // negative tilt is very bad
+            penalty: 1.5 // negative tilt is bad but Vision measures are noisy
         )
         let eyeAspectScore = scoreAgainstIdeal(
             value: eyeAspect,
             ideal: Ideals.eyeAspectRange,
-            acceptable: 0.20...0.45,
-            penalty: 1.5
+            acceptable: 0.18...0.50,
+            penalty: 1.0
         )
         let ipdScore = scoreAgainstIdeal(
             value: ipdRatio,
             ideal: Ideals.ipdRange,
-            acceptable: 0.38...0.52,
-            penalty: 1.0
+            acceptable: 0.35...0.55,
+            penalty: 0.8
         )
         let eyeAreaScore = (canthalScore * 0.45 + eyeAspectScore * 0.35 + ipdScore * 0.20)
 
@@ -181,7 +181,7 @@ final class FaceAnalysisService {
             value: fwhr,
             ideal: Ideals.fwhrRange,
             acceptable: Ideals.fwhrAcceptable,
-            penalty: 1.5
+            penalty: 1.0
         )
         let thirdsScore = scoreThirds(deviation: thirdsDeviation)
         let harmonyScore = fwhrScore * 0.5 + thirdsScore * 0.5
@@ -191,29 +191,29 @@ final class FaceAnalysisService {
         let noseScore = scoreAgainstIdeal(
             value: noseWidth,
             ideal: Ideals.noseWidthRange,
-            acceptable: 0.18...0.35,
-            penalty: 1.2
+            acceptable: 0.15...0.38,
+            penalty: 0.8
         )
         let lipScore = scoreAgainstIdeal(
             value: lipRatio,
             ideal: Ideals.lipRange,
-            acceptable: 0.22...0.50,
-            penalty: 1.0
+            acceptable: 0.18...0.55,
+            penalty: 0.8
         )
         let philtrumScore = scoreAgainstIdeal(
             value: philtrumRatio,
             ideal: Ideals.philtrumRange,
-            acceptable: 0.22...0.42,
-            penalty: 1.0
+            acceptable: 0.18...0.45,
+            penalty: 0.8
         )
         let proportionsScore = noseScore * 0.40 + lipScore * 0.30 + philtrumScore * 0.30
 
         // Skin clarity — rough estimate from image uniformity
         let skinClarityScore = estimateSkinClarity(image: image, boundingBox: boundingBox)
 
-        // Detect failos (features below 20th percentile = score < 3.5)
+        // Detect failos (features truly below average = score < 2.5)
         var failos: [String] = []
-        let failoThreshold: Double = 3.5
+        let failoThreshold: Double = 2.5
 
         if eyeAreaScore < failoThreshold { failos.append("Eye Area") }
         if jawScore < failoThreshold { failos.append("Jawline") }
@@ -222,14 +222,14 @@ final class FaceAnalysisService {
         if proportionsScore < failoThreshold { failos.append("Proportions") }
         if skinClarityScore < failoThreshold { failos.append("Skin Clarity") }
 
-        // Failo penalty: each failo caps max possible score
-        // One failo = max 7.5, two = max 6.5, three+ = max 5.5
+        // Failo penalty: each failo drags score down but doesn't obliterate it
+        // One failo = slight drag, two = noticeable, three+ = significant
         let failoPenalty: Double
         switch failos.count {
         case 0:    failoPenalty = 1.0
-        case 1:    failoPenalty = 0.75  // cap around 7.5
-        case 2:    failoPenalty = 0.65  // cap around 6.5
-        default:   failoPenalty = 0.55  // cap around 5.5
+        case 1:    failoPenalty = 0.92  // slight cap
+        case 2:    failoPenalty = 0.85  // noticeable
+        default:   failoPenalty = 0.78  // significant but not crushing
         }
 
         // Weighted composite before penalty
@@ -241,9 +241,9 @@ final class FaceAnalysisService {
             proportionsScore * Weights.proportions +
             skinClarityScore * Weights.skinClarity
 
-        // Apply bell curve compression + failo penalty
+        // Apply bell curve distribution + failo penalty
         let bellCurved = applyBellCurve(rawScore: rawComposite)
-        let finalScore = min(bellCurved * failoPenalty, 10.0).smvClamped(to: 1.0...10.0)
+        let finalScore = (bellCurved * failoPenalty).smvClamped(to: 0.0...10.0)
 
         return FaceMetrics(
             fwhr: fwhr,
@@ -671,24 +671,30 @@ final class FaceAnalysisService {
         return max(1.5, 5.0 - (0.85 - ratio) / 0.15 * 3.5)
     }
 
-    /// Bell curve compression: prevents score inflation
-    /// Most people should land 4-6. Elite (8+) is extremely rare.
+    /// Bell curve shaping: distributes scores naturally.
+    /// Most people land 4-6. Attractive 6-8. Elite 8-9.5. Full 0-10 range possible.
     private func applyBellCurve(rawScore: Double) -> Double {
-        // The raw weighted score tends to be 5-7 for most faces.
-        // We compress the top end harder to match PSL distribution.
+        // Use a true sigmoid to compress extremes while preserving spread.
+        // The raw weighted score tends to be 4-8 for most faces.
         //
-        // Mapping:
-        //   Raw 10 → Final ~9.5 (theoretical max)
-        //   Raw 8  → Final ~7.5
-        //   Raw 6  → Final ~5.5
-        //   Raw 5  → Final ~4.5
-        //   Raw 3  → Final ~2.5
-        //   Raw 1  → Final ~1.5
+        // Target distribution:
+        //   Raw 10  → Final ~9.8 (near-perfect theoretical max)
+        //   Raw 9   → Final ~8.8
+        //   Raw 8   → Final ~7.9
+        //   Raw 7   → Final ~6.8
+        //   Raw 6   → Final ~5.6
+        //   Raw 5   → Final ~4.5
+        //   Raw 4   → Final ~3.5
+        //   Raw 3   → Final ~2.5
+        //   Raw 2   → Final ~1.7
+        //   Raw 1   → Final ~1.0
 
-        // Sigmoid-like compression
-        let centered = rawScore - 5.5
-        let compressed = centered * 0.85
-        return compressed + 5.0
+        // Gentle sigmoid centered at 5.5, scaled to fill 0-10
+        let k = 0.45 // steepness — lower = gentler curve
+        let midpoint = 5.5
+        let sigmoid = 1.0 / (1.0 + exp(-k * (rawScore - midpoint)))
+        // Map sigmoid (0-1) to score (0-10)
+        return sigmoid * 10.0
     }
 
     // MARK: - Geometry Helpers

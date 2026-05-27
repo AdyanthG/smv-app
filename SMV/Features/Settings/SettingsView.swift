@@ -74,6 +74,11 @@ struct SettingsView: View {
                     }
                 }
 
+                NavigationLink(value: Router.Destination.referrals) {
+                    Label("Invite Friends", systemImage: "gift.fill")
+                        .foregroundStyle(.white)
+                }
+
                 Button { } label: {
                     Label("Restore Purchases", systemImage: "arrow.clockwise")
                         .foregroundStyle(.white)

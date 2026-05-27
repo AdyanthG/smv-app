@@ -216,4 +216,66 @@ final class FirestoreService {
             return (0, 0, 0)
         }
     }
+
+    // MARK: - Referral System
+
+    /// Get or generate a unique referral code for a user
+    func getReferralCode(userId: String) async -> String {
+        let userRef = db.collection("users").document(userId)
+        do {
+            let doc = try await userRef.getDocument()
+            if let code = doc.data()?["referralCode"] as? String {
+                return code
+            }
+            // Generate a short code: first 6 chars of userId
+            let code = "SMV-" + String(userId.prefix(6)).uppercased()
+            try await userRef.setData(["referralCode": code, "referralCount": 0], merge: true)
+            return code
+        } catch {
+            return "SMV-ERROR"
+        }
+    }
+
+    /// Redeem a referral code (called when new user signs up with a code)
+    func redeemReferral(code: String, newUserId: String) async -> Bool {
+        do {
+            // Find the user who owns this code
+            let snapshot = try await db.collection("users")
+                .whereField("referralCode", isEqualTo: code)
+                .limit(to: 1)
+                .getDocuments()
+
+            guard let referrerDoc = snapshot.documents.first else { return false }
+            let referrerId = referrerDoc.documentID
+
+            // Don't let users refer themselves
+            guard referrerId != newUserId else { return false }
+
+            // Increment referral count
+            try await db.collection("users").document(referrerId).updateData([
+                "referralCount": FieldValue.increment(Int64(1))
+            ])
+
+            // Record who referred this user
+            try await db.collection("users").document(newUserId).setData([
+                "referredBy": referrerId,
+                "referredByCode": code,
+            ], merge: true)
+
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    /// Get referral count for a user
+    func getReferralCount(userId: String) async -> Int {
+        do {
+            let doc = try await db.collection("users").document(userId).getDocument()
+            return doc.data()?["referralCount"] as? Int ?? 0
+        } catch {
+            return 0
+        }
+    }
 }

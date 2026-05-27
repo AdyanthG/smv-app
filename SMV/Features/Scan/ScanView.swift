@@ -2,16 +2,17 @@
 //  ScanView.swift
 //  SMV
 //
-//  Face scanning interface: camera preview, upload, and analysis.
+//  Face scanning interface: live camera only for authentic, fraud-proof scans.
 //
 
 import SwiftUI
 import SwiftData
-import PhotosUI
 
 struct ScanView: View {
 
     @State private var viewModel = ScanViewModel()
+    @State private var screenFlashEnabled = false
+    @State private var showFlashOverlay = false
     @Environment(Router.self) private var router
     @Environment(HapticService.self) private var haptics
     @Environment(AuthService.self) private var auth
@@ -37,10 +38,12 @@ struct ScanView: View {
             case .error(let message):
                 errorView(message)
             }
-        }
-        .onChange(of: viewModel.selectedPhoto) { _, newValue in
-            Task {
-                await viewModel.handlePhotoSelection(newValue)
+
+            // Screen flash overlay (Snapchat-style front flash)
+            if showFlashOverlay {
+                Color.white
+                    .ignoresSafeArea()
+                    .transition(.opacity)
             }
         }
     }
@@ -72,7 +75,7 @@ struct ScanView: View {
                     .font(SMVFont.displaySmall())
                     .foregroundStyle(.white)
 
-                Text("Take a photo or upload one to get your AI-powered analysis")
+                Text("Use the front camera for an authentic AI-powered analysis")
                     .font(SMVFont.body())
                     .foregroundStyle(Color.smvTextSecondary)
                     .multilineTextAlignment(.center)
@@ -81,33 +84,9 @@ struct ScanView: View {
 
             VStack(spacing: SMVSpacing.lg) {
                 // Camera button
-                GradientButton(title: "Use Camera", icon: "camera.fill") {
+                GradientButton(title: "Start Scan", icon: "camera.fill") {
                     haptics.mediumImpact()
                     viewModel.startCamera()
-                }
-
-                // Photo picker
-                PhotosPicker(
-                    selection: $viewModel.selectedPhoto,
-                    matching: .images
-                ) {
-                    HStack(spacing: SMVSpacing.sm) {
-                        Image(systemName: "photo.on.rectangle")
-                            .font(.system(size: 16, weight: .semibold))
-                        Text("Upload Photo")
-                            .font(SMVFont.title())
-                    }
-                    .foregroundStyle(Color.smvTextPrimary)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, SMVSpacing.lg)
-                    .background(
-                        RoundedRectangle(cornerRadius: SMVRadius.xl)
-                            .fill(Color.smvSurface2)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: SMVRadius.xl)
-                                    .stroke(Color.white.opacity(0.1), lineWidth: 1)
-                            )
-                    )
                 }
             }
             .padding(.horizontal, SMVSpacing.xxl)
@@ -153,16 +132,16 @@ struct ScanView: View {
                         Image(systemName: "xmark")
                             .font(.system(size: 18, weight: .bold))
                             .foregroundStyle(.white)
-                            .frame(width: 44, height: 44)
+                            .frame(width: 48, height: 48)
                             .background(Circle().fill(.ultraThinMaterial))
                     }
 
                     Spacer()
 
-                    // Real capture button
+                    // Capture button
                     Button {
                         haptics.mediumImpact()
-                        viewModel.takePhoto()
+                        triggerCapture()
                     } label: {
                         ZStack {
                             Circle()
@@ -176,21 +155,56 @@ struct ScanView: View {
 
                     Spacer()
 
-                    // Gallery picker
-                    PhotosPicker(
-                        selection: $viewModel.selectedPhoto,
-                        matching: .images
-                    ) {
-                        Image(systemName: "photo.on.rectangle")
+                    // Screen flash toggle (replaces upload)
+                    Button {
+                        screenFlashEnabled.toggle()
+                        haptics.lightImpact()
+                    } label: {
+                        Image(systemName: screenFlashEnabled ? "sun.max.fill" : "sun.max")
                             .font(.system(size: 18, weight: .bold))
-                            .foregroundStyle(.white)
-                            .frame(width: 44, height: 44)
-                            .background(Circle().fill(.ultraThinMaterial))
+                            .foregroundStyle(screenFlashEnabled ? Color.smvAmber : .white)
+                            .frame(width: 48, height: 48)
+                            .background(
+                                Circle()
+                                    .fill(screenFlashEnabled
+                                        ? Color.smvAmber.opacity(0.2)
+                                        : Color.clear.opacity(0.001)
+                                    )
+                                    .overlay(
+                                        Circle().fill(.ultraThinMaterial)
+                                            .opacity(screenFlashEnabled ? 0 : 1)
+                                    )
+                            )
                     }
                 }
-                .padding(.horizontal, SMVSpacing.xxl)
-                .padding(.bottom, SMVSpacing.huge)
+                .padding(.horizontal, SMVSpacing.xxxl)
+                .padding(.bottom, 100) // Well above the tab bar
             }
+        }
+    }
+
+    // MARK: - Screen Flash + Capture
+
+    private func triggerCapture() {
+        if screenFlashEnabled {
+            // Flash the screen white briefly (Snapchat front-flash effect)
+            let originalBrightness = UIScreen.main.brightness
+            UIScreen.main.brightness = 1.0
+            withAnimation(.easeIn(duration: 0.05)) {
+                showFlashOverlay = true
+            }
+
+            // Capture after brief flash
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                viewModel.takePhoto()
+
+                withAnimation(.easeOut(duration: 0.3)) {
+                    showFlashOverlay = false
+                }
+                UIScreen.main.brightness = originalBrightness
+            }
+        } else {
+            viewModel.takePhoto()
         }
     }
 
@@ -219,12 +233,12 @@ struct ScanView: View {
                         }
                     }
 
-                    SecondaryButton(title: "Choose Different Photo", icon: "arrow.counterclockwise") {
-                        viewModel.reset()
+                    SecondaryButton(title: "Retake Photo", icon: "arrow.counterclockwise") {
+                        viewModel.startCamera()
                     }
                 }
                 .padding(.horizontal, SMVSpacing.xxl)
-                .padding(.bottom, SMVSpacing.huge)
+                .padding(.bottom, 100) // Above tab bar
             }
         }
     }

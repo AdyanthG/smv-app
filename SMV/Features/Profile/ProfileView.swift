@@ -240,14 +240,44 @@ struct ProfileView: View {
             router.push(.scanResults(scanId: scan.id))
         } label: {
             VStack(spacing: SMVSpacing.xs) {
-                RoundedRectangle(cornerRadius: SMVRadius.sm)
-                    .fill(ScoreTier.from(score: scan.overallScore).color.opacity(0.15))
-                    .frame(height: 90)
-                    .overlay(
-                        Text(scan.overallScore.scoreFormatted)
-                            .font(SMVFont.scoreMedium())
-                            .foregroundStyle(ScoreTier.from(score: scan.overallScore).color)
-                    )
+                ZStack {
+                    if let data = scan.imageData, let uiImage = UIImage(data: data) {
+                        Image(uiImage: uiImage)
+                            .resizable()
+                            .scaledToFill()
+                            .frame(height: 110)
+                            .clipShape(RoundedRectangle(cornerRadius: SMVRadius.sm))
+                            .overlay(
+                                // Score badge overlay at bottom-right
+                                VStack {
+                                    Spacer()
+                                    HStack {
+                                        Spacer()
+                                        Text(scan.overallScore.scoreFormatted)
+                                            .font(SMVFont.caption())
+                                            .fontWeight(.bold)
+                                            .foregroundStyle(.white)
+                                            .padding(.horizontal, 6)
+                                            .padding(.vertical, 3)
+                                            .background(
+                                                Capsule()
+                                                    .fill(ScoreTier.from(score: scan.overallScore).color.opacity(0.9))
+                                            )
+                                            .padding(4)
+                                    }
+                                }
+                            )
+                    } else {
+                        RoundedRectangle(cornerRadius: SMVRadius.sm)
+                            .fill(ScoreTier.from(score: scan.overallScore).color.opacity(0.15))
+                            .frame(height: 110)
+                            .overlay(
+                                Text(scan.overallScore.scoreFormatted)
+                                    .font(SMVFont.scoreMedium())
+                                    .foregroundStyle(ScoreTier.from(score: scan.overallScore).color)
+                            )
+                    }
+                }
 
                 Text(scan.timestamp.formatted(.dateTime.month(.abbreviated).day()))
                     .font(SMVFont.micro())

@@ -95,12 +95,33 @@ struct PaywallView: View {
     // MARK: - Feature Comparison
 
     private var featureComparison: some View {
-        VStack(spacing: SMVSpacing.md) {
-            featureRow(icon: "bolt.fill", text: "Unlimited Scans", free: "3/mo", pro: "∞")
-            featureRow(icon: "chart.bar.fill", text: "Detailed Breakdown", free: "—", pro: "✓")
-            featureRow(icon: "chart.line.uptrend.xyaxis", text: "Score Trends", free: "—", pro: "✓")
-            featureRow(icon: "bubble.fill", text: "Forum Posting", free: "Read Only", pro: "Full Access")
-            featureRow(icon: "trophy.fill", text: "Leaderboard", free: "View", pro: "Compete")
+        VStack(spacing: 0) {
+            // Header
+            HStack {
+                Text("")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Text("Free")
+                    .font(SMVFont.micro())
+                    .foregroundStyle(Color.smvTextTertiary)
+                    .frame(width: 50)
+                Text("Pro")
+                    .font(SMVFont.micro())
+                    .fontWeight(.bold)
+                    .foregroundStyle(Color.smvAmber)
+                    .frame(width: 50)
+            }
+            .padding(.bottom, SMVSpacing.sm)
+
+            Divider().overlay(Color.smvSurface2)
+                .padding(.bottom, SMVSpacing.sm)
+
+            featureRow(icon: "bolt.fill", text: "Face Scans", free: "∞", pro: "∞")
+            featureRow(icon: "chart.bar.fill", text: "Score Breakdown", free: "Overall", pro: "Full Detail")
+            featureRow(icon: "chart.line.uptrend.xyaxis", text: "Progress Trends", free: "—", pro: "✓")
+            featureRow(icon: "arrow.left.and.right", text: "Before/After", free: "—", pro: "✓")
+            featureRow(icon: "person.2.fill", text: "Improvement Tips", free: "Basic", pro: "Personalized")
+            featureRow(icon: "square.and.arrow.up", text: "Share Cards", free: "Watermark", pro: "Clean")
+            featureRow(icon: "crown.fill", text: "Pro Badge", free: "—", pro: "✓")
             featureRow(icon: "sparkles", text: "AI Coach", free: "—", pro: "Elite Only")
         }
     }

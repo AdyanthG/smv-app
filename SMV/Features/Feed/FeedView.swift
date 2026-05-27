@@ -21,7 +21,13 @@ struct FeedView: View {
             ScrollView {
                 LazyVStack(spacing: 0) {
                     ForEach(posts) { post in
-                        PostCardView(post: post)
+                        Button {
+                            router.push(.postDetail(postId: post.id))
+                        } label: {
+                            PostCardView(post: post)
+                        }
+                        .buttonStyle(.plain)
+
                         Divider()
                             .overlay(Color.smvSurface2)
                     }

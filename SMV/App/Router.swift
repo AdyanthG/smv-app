@@ -61,6 +61,7 @@ final class Router {
         case challengeDetail(challengeId: String)
         case community
         case progress
+        case referrals
     }
 
     // ── Modal Sheets ──

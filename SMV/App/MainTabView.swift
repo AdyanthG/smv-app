@@ -26,7 +26,7 @@ struct MainTabView: View {
                         case .userProfile(let userId):
                             UserProfileView(userId: userId, displayName: "User", score: 5.0)
                         case .postDetail(let postId):
-                            Text("Post: \(postId)")
+                            PostDetailView(postId: postId)
                         case .settings:
                             SettingsView()
                         case .editProfile:
@@ -39,6 +39,8 @@ struct MainTabView: View {
                             CommunityView()
                         case .progress:
                             ScoreProgressView()
+                        case .referrals:
+                            ReferralView()
                         }
                     }
             }
