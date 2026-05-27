@@ -46,8 +46,8 @@ enum ScanPosition: Int, CaseIterable {
     var targetYaw: Double {
         switch self {
         case .front: return 0
-        case .left:  return 0.26    // ~15 degrees left
-        case .right: return -0.26   // ~15 degrees right
+        case .left:  return -0.26   // ~15 degrees left
+        case .right: return 0.26    // ~15 degrees right
         case .up:    return 0
         case .down:  return 0
         }
@@ -58,8 +58,8 @@ enum ScanPosition: Int, CaseIterable {
         case .front: return 0
         case .left:  return 0
         case .right: return 0
-        case .up:    return -0.21   // ~12 degrees up (negative pitch in ARKit)
-        case .down:  return 0.21    // ~12 degrees down
+        case .up:    return 0.21    // ~12 degrees up
+        case .down:  return -0.21   // ~12 degrees down
         }
     }
 
