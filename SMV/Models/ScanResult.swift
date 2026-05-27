@@ -49,7 +49,7 @@ final class ScanResult {
     var failoPenalty: Double
 
     // ── Multi-angle scan flag ──
-    var isMultiAngleScan: Bool
+    var isMultiAngleScan: Bool = false
 
     // ── Image ──
     @Attribute(.externalStorage)
