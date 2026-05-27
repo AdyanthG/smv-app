@@ -68,7 +68,21 @@ struct SMVApp: App {
         do {
             return try ModelContainer(for: schema, configurations: [config])
         } catch {
-            fatalError("Could not create ModelContainer: \(error)")
+            // Schema changed — wipe the old store and retry
+            // This is expected during development when adding new model fields
+            print("[SMVApp] ModelContainer failed, wiping store: \(error)")
+            let url = config.url
+            let fm = FileManager.default
+            // Remove the main store and its journal files
+            for suffix in ["", "-shm", "-wal"] {
+                let fileURL = URL(fileURLWithPath: url.path() + suffix)
+                try? fm.removeItem(at: fileURL)
+            }
+            do {
+                return try ModelContainer(for: schema, configurations: [config])
+            } catch {
+                fatalError("Could not create ModelContainer after reset: \(error)")
+            }
         }
     }()
 
