@@ -15,6 +15,7 @@ struct ThreadDetailView: View {
     @Environment(Router.self) private var router
     @Environment(AuthService.self) private var auth
     @Environment(HapticService.self) private var haptics
+    @Environment(FirestoreService.self) private var firestore
     @Environment(\.modelContext) private var modelContext
     @Query private var allThreads: [ForumThread]
     @Query private var allReplies: [ForumReply]
@@ -260,18 +261,38 @@ struct ThreadDetailView: View {
         guard !replyText.isEmpty, let thread else { return }
         haptics.mediumImpact()
 
+        let authorId = auth.currentUserId ?? "guest"
+        let authorName = auth.displayName.isEmpty ? "You" : auth.displayName
+        let authorHandle = UserDefaults.standard.string(forKey: "smv_handle") ?? "user"
+        let text = replyText
+
         let reply = ForumReply(
             threadId: threadId,
-            authorId: auth.currentUserId ?? "guest",
-            authorName: auth.displayName.isEmpty ? "You" : auth.displayName,
-            authorHandle: UserDefaults.standard.string(forKey: "smv_handle") ?? "user",
-            body: replyText
+            authorId: authorId,
+            authorName: authorName,
+            authorHandle: authorHandle,
+            body: text
         )
         modelContext.insert(reply)
 
         thread.replyCount += 1
         thread.lastActivityAt = .now
         replyText = ""
+
+        // Sync to Firestore
+        let replyId = reply.id
+        let tid = threadId
+        Task {
+            await firestore.createReply(
+                id: replyId,
+                threadId: tid,
+                authorId: authorId,
+                authorName: authorName,
+                authorHandle: authorHandle,
+                authorScore: nil,
+                body: text
+            )
+        }
     }
 
     // Seed sample replies on first view

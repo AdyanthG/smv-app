@@ -15,6 +15,7 @@ struct CreateThreadView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
     @Environment(AuthService.self) private var auth
+    @Environment(FirestoreService.self) private var firestore
     @Environment(HapticService.self) private var haptics
     @State private var title = ""
     @State private var bodyText = ""
@@ -94,15 +95,35 @@ struct CreateThreadView: View {
     private func createThread() {
         haptics.mediumImpact()
 
+        let authorId = auth.currentUserId ?? "guest"
+        let authorName = auth.displayName.isEmpty ? "You" : auth.displayName
+        let authorHandle = UserDefaults.standard.string(forKey: "smv_handle") ?? "user"
+
         let thread = ForumThread(
             categoryId: category,
-            authorId: auth.currentUserId ?? "guest",
-            authorName: auth.displayName.isEmpty ? "You" : auth.displayName,
-            authorHandle: UserDefaults.standard.string(forKey: "smv_handle") ?? "user",
+            authorId: authorId,
+            authorName: authorName,
+            authorHandle: authorHandle,
             title: title,
             body: bodyText
         )
         modelContext.insert(thread)
+
+        // Sync to Firestore
+        let threadId = thread.id
+        Task {
+            await firestore.createThread(
+                id: threadId,
+                categoryId: category,
+                authorId: authorId,
+                authorName: authorName,
+                authorHandle: authorHandle,
+                authorScore: nil,
+                title: title,
+                body: bodyText
+            )
+        }
+
         dismiss()
     }
 }

@@ -46,8 +46,8 @@ enum ScanPosition: Int, CaseIterable {
     var targetYaw: Double {
         switch self {
         case .front: return 0
-        case .left:  return 0.35   // ~20 degrees left
-        case .right: return -0.35  // ~20 degrees right
+        case .left:  return 0.25    // ~14 degrees left
+        case .right: return -0.25   // ~14 degrees right
         case .up:    return 0
         case .down:  return 0
         }
@@ -58,14 +58,25 @@ enum ScanPosition: Int, CaseIterable {
         case .front: return 0
         case .left:  return 0
         case .right: return 0
-        case .up:    return 0.30   // chin up
-        case .down:  return -0.30  // chin down
+        case .up:    return 0.22    // ~12 degrees chin up
+        case .down:  return -0.22   // ~12 degrees chin down
         }
     }
 
     /// Tolerance in radians for considering the position "aligned"
-    var yawTolerance: Double { 0.15 }   // ~8.5 degrees
-    var pitchTolerance: Double { 0.15 }
+    var yawTolerance: Double {
+        switch self {
+        case .front: return 0.18    // ~10 degrees — slightly tighter to prevent off-angle frontal
+        default:     return 0.25    // ~14 degrees — generous for side/up/down
+        }
+    }
+
+    var pitchTolerance: Double {
+        switch self {
+        case .front: return 0.15    // ~8.5 degrees — tight to prevent tilted frontal captures
+        default:     return 0.25    // ~14 degrees — generous for side/up/down
+        }
+    }
 }
 
 // MARK: - Capture Data

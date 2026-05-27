@@ -394,5 +394,137 @@ final class FirestoreService {
             errorMessage = error.localizedDescription
         }
     }
-}
 
+    // MARK: - Forum Threads
+
+    func createThread(
+        id: String,
+        categoryId: String,
+        authorId: String,
+        authorName: String,
+        authorHandle: String,
+        authorScore: Double?,
+        title: String,
+        body: String
+    ) async {
+        var data: [String: Any] = [
+            "categoryId": categoryId,
+            "authorId": authorId,
+            "authorName": authorName,
+            "authorHandle": authorHandle,
+            "title": title,
+            "body": body,
+            "replyCount": 0,
+            "viewCount": 0,
+            "likeCount": 0,
+            "isPinned": false,
+            "createdAt": FieldValue.serverTimestamp(),
+            "lastActivityAt": FieldValue.serverTimestamp(),
+        ]
+        if let score = authorScore {
+            data["authorScore"] = score
+        }
+
+        do {
+            try await db.collection("threads").document(id).setData(data)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func fetchThreads(categoryId: String) async -> [[String: Any]] {
+        do {
+            let snapshot = try await db.collection("threads")
+                .whereField("categoryId", isEqualTo: categoryId)
+                .order(by: "lastActivityAt", descending: true)
+                .limit(to: 50)
+                .getDocuments()
+
+            return snapshot.documents.map { doc in
+                var data = doc.data()
+                data["id"] = doc.documentID
+                return data
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+            return []
+        }
+    }
+
+    // MARK: - Forum Replies
+
+    func createReply(
+        id: String,
+        threadId: String,
+        authorId: String,
+        authorName: String,
+        authorHandle: String,
+        authorScore: Double?,
+        body: String
+    ) async {
+        var data: [String: Any] = [
+            "threadId": threadId,
+            "authorId": authorId,
+            "authorName": authorName,
+            "authorHandle": authorHandle,
+            "body": body,
+            "likeCount": 0,
+            "createdAt": FieldValue.serverTimestamp(),
+        ]
+        if let score = authorScore {
+            data["authorScore"] = score
+        }
+
+        do {
+            try await db.collection("replies").document(id).setData(data)
+            // Increment reply count on thread
+            try await db.collection("threads").document(threadId).updateData([
+                "replyCount": FieldValue.increment(Int64(1)),
+                "lastActivityAt": FieldValue.serverTimestamp(),
+            ])
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func fetchReplies(threadId: String) async -> [[String: Any]] {
+        do {
+            let snapshot = try await db.collection("replies")
+                .whereField("threadId", isEqualTo: threadId)
+                .order(by: "createdAt", descending: false)
+                .limit(to: 100)
+                .getDocuments()
+
+            return snapshot.documents.map { doc in
+                var data = doc.data()
+                data["id"] = doc.documentID
+                return data
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+            return []
+        }
+    }
+
+    // MARK: - Forum Likes
+
+    func likeThread(threadId: String, increment: Bool) async {
+        do {
+            try await db.collection("threads").document(threadId).updateData([
+                "likeCount": FieldValue.increment(Int64(increment ? 1 : -1)),
+            ])
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func likeReply(replyId: String, increment: Bool) async {
+        do {
+            try await db.collection("replies").document(replyId).updateData([
+                "likeCount": FieldValue.increment(Int64(increment ? 1 : -1)),
+            ])
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+}
