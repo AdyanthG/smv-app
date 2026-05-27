@@ -2,9 +2,13 @@
 //  FaceAnalysisService.swift
 //  SMV
 //
-//  PSL-accurate facial analysis engine.
+//  PSL-accurate facial analysis engine with quality validation.
 //  Measures real biometric ratios from Vision landmarks and scores
 //  against looksmaxxing community standards.
+//
+//  Quality gates: Face must be frontal, upright, properly lit, and
+//  undistorted. Bad angles, puffed cheeks, head tilts, and partial
+//  faces are detected and penalized.
 //
 //  Metrics: FWHR, canthal tilt, gonial angle, facial thirds,
 //  IPD ratio, eye aspect ratio, nose width ratio, lip ratio,
@@ -16,7 +20,22 @@
 import Vision
 import UIKit
 
+// MARK: - Face Quality Assessment
+
+struct FaceQuality {
+    let yaw: Double          // Head rotation left/right (degrees, 0 = frontal)
+    let roll: Double         // Head tilt (degrees, 0 = upright)
+    let faceAreaRatio: Double // Face bbox area / image area (too small = too far)
+    let landmarkConfidence: Float
+    let isValid: Bool
+    let issues: [String]
+    let qualityMultiplier: Double // 0-1, applied to final score
+}
+
 struct FaceMetrics {
+    // Quality assessment
+    let quality: FaceQuality
+
     // Raw measurements
     let fwhr: Double                  // Face Width-to-Height Ratio
     let canthalTiltDegrees: Double    // Canthal tilt in degrees
@@ -59,11 +78,13 @@ final class FaceAnalysisService {
             return nil
         }
 
+        // Run face detection with quality metrics
         let request = VNDetectFaceLandmarksRequest()
+        let qualityRequest = VNDetectFaceCaptureQualityRequest()
         let handler = VNImageRequestHandler(cgImage: cgImage, orientation: .up)
 
         do {
-            try handler.perform([request])
+            try handler.perform([request, qualityRequest])
         } catch {
             errorMessage = "Face detection failed: \(error.localizedDescription)"
             return nil
@@ -75,11 +96,23 @@ final class FaceAnalysisService {
             return nil
         }
 
+        // Get capture quality from Apple's quality assessment
+        let captureQuality = qualityRequest.results?.first?.faceCaptureQuality ?? 0.5
+
         let metrics = analyzeFace(
             landmarks: landmarks,
             boundingBox: observation.boundingBox,
-            image: image
+            image: image,
+            captureQuality: Float(captureQuality),
+            yaw: observation.yaw?.doubleValue,
+            roll: observation.roll?.doubleValue
         )
+
+        // Block clearly invalid scans
+        if !metrics.quality.isValid {
+            errorMessage = "Poor scan quality: \(metrics.quality.issues.joined(separator: ", ")). Please face the camera straight-on in good lighting."
+            return nil
+        }
 
         let imageData = image.jpegData(compressionQuality: 0.7)
         return ScanResult(userId: userId, metrics: metrics, imageData: imageData)
@@ -103,19 +136,19 @@ final class FaceAnalysisService {
         // Facial Thirds: equal = 0 deviation
         static let thirdsMaxDeviation: Double = 0.05
 
-        // IPD: typical attractive ratio (widened for 2D landmark noise)
+        // IPD: typical attractive ratio
         static let ipdRange: ClosedRange<Double> = 0.40...0.50
 
-        // Eye Aspect Ratio: almond shape (widened)
+        // Eye Aspect Ratio: almond shape
         static let eyeAspectRange: ClosedRange<Double> = 0.25...0.40
 
-        // Nose Width: "should fit between the eyes" (widened)
+        // Nose Width: "should fit between the eyes"
         static let noseWidthRange: ClosedRange<Double> = 0.20...0.30
 
-        // Lip fullness (widened)
+        // Lip fullness
         static let lipRange: ClosedRange<Double> = 0.25...0.45
 
-        // Philtrum-to-chin (widened)
+        // Philtrum-to-chin
         static let philtrumRange: ClosedRange<Double> = 0.25...0.38
 
         // Symmetry: >90% is good
@@ -138,9 +171,22 @@ final class FaceAnalysisService {
     func analyzeFace(
         landmarks: VNFaceLandmarks2D,
         boundingBox: CGRect,
-        image: UIImage
+        image: UIImage,
+        captureQuality: Float = 0.5,
+        yaw: Double? = nil,
+        roll: Double? = nil
     ) -> FaceMetrics {
-        // Extract raw measurements
+
+        // ── Step 0: Quality Gate ──
+        let quality = assessQuality(
+            landmarks: landmarks,
+            boundingBox: boundingBox,
+            captureQuality: captureQuality,
+            yaw: yaw,
+            roll: roll
+        )
+
+        // ── Step 1: Extract raw measurements ──
         let fwhr = calculateFWHR(landmarks: landmarks)
         let canthalTilt = calculateCanthalTilt(landmarks: landmarks)
         let gonialAngle = estimateGonialAngle(landmarks: landmarks)
@@ -152,12 +198,21 @@ final class FaceAnalysisService {
         let philtrumRatio = calculatePhiltrumRatio(landmarks: landmarks)
         let symmetry = calculateSymmetry(landmarks: landmarks)
 
-        // Score each metric against ideals (0-10 scale)
+        // ── Step 2: Detect distortion (puffed cheeks, fish face, etc.) ──
+        let distortionPenalty = detectDistortion(
+            fwhr: fwhr,
+            lipRatio: lipRatio,
+            noseWidth: noseWidth,
+            jawAngle: gonialAngle,
+            landmarks: landmarks
+        )
+
+        // ── Step 3: Score each metric against ideals (0-10 scale) ──
         let canthalScore = scoreAgainstIdeal(
             value: canthalTilt,
             ideal: Ideals.canthalRange,
             acceptable: Ideals.canthalAcceptable,
-            penalty: 1.5 // negative tilt is bad but Vision measures are noisy
+            penalty: 1.5
         )
         let eyeAspectScore = scoreAgainstIdeal(
             value: eyeAspect,
@@ -211,7 +266,7 @@ final class FaceAnalysisService {
         // Skin clarity — rough estimate from image uniformity
         let skinClarityScore = estimateSkinClarity(image: image, boundingBox: boundingBox)
 
-        // Detect failos (features truly below average = score < 2.5)
+        // ── Step 4: Detect failos ──
         var failos: [String] = []
         let failoThreshold: Double = 2.5
 
@@ -222,17 +277,15 @@ final class FaceAnalysisService {
         if proportionsScore < failoThreshold { failos.append("Proportions") }
         if skinClarityScore < failoThreshold { failos.append("Skin Clarity") }
 
-        // Failo penalty: each failo drags score down but doesn't obliterate it
-        // One failo = slight drag, two = noticeable, three+ = significant
         let failoPenalty: Double
         switch failos.count {
         case 0:    failoPenalty = 1.0
-        case 1:    failoPenalty = 0.92  // slight cap
-        case 2:    failoPenalty = 0.85  // noticeable
-        default:   failoPenalty = 0.78  // significant but not crushing
+        case 1:    failoPenalty = 0.92
+        case 2:    failoPenalty = 0.85
+        default:   failoPenalty = 0.78
         }
 
-        // Weighted composite before penalty
+        // ── Step 5: Weighted composite ──
         let rawComposite =
             eyeAreaScore * Weights.eyeArea +
             jawScore * Weights.jaw +
@@ -241,11 +294,14 @@ final class FaceAnalysisService {
             proportionsScore * Weights.proportions +
             skinClarityScore * Weights.skinClarity
 
-        // Apply bell curve distribution + failo penalty
+        // ── Step 6: Apply bell curve + penalties ──
         let bellCurved = applyBellCurve(rawScore: rawComposite)
-        let finalScore = (bellCurved * failoPenalty).smvClamped(to: 0.0...10.0)
+        let qualityAdjusted = bellCurved * quality.qualityMultiplier
+        let distortionAdjusted = qualityAdjusted * distortionPenalty
+        let finalScore = (distortionAdjusted * failoPenalty).smvClamped(to: 0.0...10.0)
 
         return FaceMetrics(
+            quality: quality,
             fwhr: fwhr,
             canthalTiltDegrees: canthalTilt,
             gonialAngleDegrees: gonialAngle,
@@ -256,16 +312,157 @@ final class FaceAnalysisService {
             lipRatio: lipRatio,
             philtrumRatio: philtrumRatio,
             symmetryScore: symmetry,
-            eyeAreaScore: eyeAreaScore.smvClamped(to: 1.0...10.0),
-            jawScore: jawScore.smvClamped(to: 1.0...10.0),
-            harmonyScore: harmonyScore.smvClamped(to: 1.0...10.0),
-            symmetryRating: symmetryRating.smvClamped(to: 1.0...10.0),
-            skinClarityScore: skinClarityScore.smvClamped(to: 1.0...10.0),
-            proportionsScore: proportionsScore.smvClamped(to: 1.0...10.0),
+            eyeAreaScore: eyeAreaScore.smvClamped(to: 0.0...10.0),
+            jawScore: jawScore.smvClamped(to: 0.0...10.0),
+            harmonyScore: harmonyScore.smvClamped(to: 0.0...10.0),
+            symmetryRating: symmetryRating.smvClamped(to: 0.0...10.0),
+            skinClarityScore: skinClarityScore.smvClamped(to: 0.0...10.0),
+            proportionsScore: proportionsScore.smvClamped(to: 0.0...10.0),
             failos: failos,
             failoPenalty: failoPenalty,
             overallScore: finalScore
         )
+    }
+
+    // MARK: - Quality Assessment
+
+    /// Validates face orientation, size, and capture quality.
+    /// Returns a multiplier (0-1) that penalizes bad scans.
+    private func assessQuality(
+        landmarks: VNFaceLandmarks2D,
+        boundingBox: CGRect,
+        captureQuality: Float,
+        yaw: Double?,
+        roll: Double?
+    ) -> FaceQuality {
+
+        var issues: [String] = []
+        var multiplier: Double = 1.0
+
+        // ── Yaw (head turned left/right) ──
+        // Vision yaw: 0 = frontal, positive = turned right, negative = turned left
+        let yawDeg = abs((yaw ?? 0) * (180.0 / .pi))
+        if yawDeg > 25 {
+            issues.append("Turn your face toward the camera")
+            multiplier *= 0.7
+        } else if yawDeg > 15 {
+            issues.append("Face slightly angled")
+            multiplier *= 0.88
+        } else if yawDeg > 8 {
+            // Minor angle — small penalty
+            multiplier *= 0.95
+        }
+
+        // ── Roll (head tilted sideways) ──
+        let rollDeg = abs((roll ?? 0) * (180.0 / .pi))
+        if rollDeg > 20 {
+            issues.append("Straighten your head")
+            multiplier *= 0.75
+        } else if rollDeg > 10 {
+            issues.append("Slight head tilt")
+            multiplier *= 0.90
+        }
+
+        // ── Face size (too far / too close) ──
+        let faceArea = Double(boundingBox.width * boundingBox.height)
+        if faceArea < 0.04 {
+            issues.append("Move closer to the camera")
+            multiplier *= 0.80
+        } else if faceArea < 0.08 {
+            multiplier *= 0.92
+        } else if faceArea > 0.65 {
+            issues.append("Move slightly further from camera")
+            multiplier *= 0.90
+        }
+
+        // ── Apple's capture quality score ──
+        if captureQuality < 0.2 {
+            issues.append("Poor lighting or blurry image")
+            multiplier *= 0.75
+        } else if captureQuality < 0.4 {
+            multiplier *= 0.90
+        }
+
+        // ── Landmark completeness check ──
+        let hasEyes = landmarks.leftEye != nil && landmarks.rightEye != nil
+        let hasNose = landmarks.nose != nil
+        let hasLips = landmarks.outerLips != nil
+        let hasBrows = landmarks.leftEyebrow != nil && landmarks.rightEyebrow != nil
+        let hasContour = landmarks.faceContour != nil
+
+        let landmarkCount = [hasEyes, hasNose, hasLips, hasBrows, hasContour].filter { $0 }.count
+        if landmarkCount < 4 {
+            issues.append("Face partially obscured")
+            multiplier *= 0.70
+        }
+
+        // ── Determine validity ──
+        // Block scan if quality is extremely poor
+        let isValid = multiplier > 0.50 && landmarkCount >= 3
+
+        return FaceQuality(
+            yaw: yawDeg,
+            roll: rollDeg,
+            faceAreaRatio: faceArea,
+            landmarkConfidence: captureQuality,
+            isValid: isValid,
+            issues: issues,
+            qualityMultiplier: multiplier
+        )
+    }
+
+    // MARK: - Distortion Detection
+
+    /// Detects unnatural facial distortion (puffed cheeks, fish face,
+    /// tongue out, etc.) by checking for implausible ratio combinations.
+    private func detectDistortion(
+        fwhr: Double,
+        lipRatio: Double,
+        noseWidth: Double,
+        jawAngle: Double,
+        landmarks: VNFaceLandmarks2D
+    ) -> Double {
+        var penalty: Double = 1.0
+
+        // ── Puffed cheeks: abnormally wide face + compressed vertical features ──
+        // Normal FWHR is 1.65-2.25. Puffing cheeks pushes > 2.3
+        if fwhr > 2.4 {
+            // Extremely wide face = puffed cheeks or distortion
+            penalty *= max(0.65, 1.0 - (fwhr - 2.4) * 1.5)
+        } else if fwhr > 2.25 {
+            penalty *= max(0.85, 1.0 - (fwhr - 2.25) * 0.8)
+        }
+
+        // ── Fish face / duck lips: abnormally high lip ratio ──
+        if lipRatio > 0.55 {
+            penalty *= max(0.70, 1.0 - (lipRatio - 0.55) * 2.0)
+        }
+
+        // ── Cross-validate: if FWHR is high AND nose appears compressed,
+        //    that's a strong distortion signal (cheeks push landmarks) ──
+        if fwhr > 2.15 && noseWidth < 0.18 {
+            penalty *= 0.80
+        }
+
+        // ── Mouth gaping: check if lips are abnormally far apart ──
+        if let outerLips = landmarks.outerLips, let innerLips = landmarks.innerLips {
+            let outerPts = outerLips.normalizedPoints
+            let innerPts = innerLips.normalizedPoints
+
+            let outerYs = outerPts.map { Double($0.y) }
+            let innerYs = innerPts.map { Double($0.y) }
+
+            let outerHeight = (outerYs.max() ?? 0) - (outerYs.min() ?? 0)
+            let innerHeight = (innerYs.max() ?? 0) - (innerYs.min() ?? 0)
+
+            // If mouth is wide open, inner lip gap is large relative to outer
+            if innerHeight > 0.02 && innerHeight / outerHeight > 0.5 {
+                // Mouth is open — penalize (should scan with mouth closed)
+                penalty *= 0.85
+            }
+        }
+
+        return penalty.smvClamped(to: 0.50...1.0)
     }
 
     // MARK: - Raw Measurement Calculations
@@ -311,17 +508,23 @@ final class FaceAnalysisService {
         let rightPts = rightEye.normalizedPoints
         guard leftPts.count >= 6, rightPts.count >= 6 else { return 3.0 }
 
-        // Left eye: inner corner = first point, outer = midpoint
-        let leftInner = leftPts[0]
-        let leftOuter = leftPts[leftPts.count / 2]
-        let leftAngle = atan2(Double(leftOuter.y - leftInner.y), Double(leftOuter.x - leftInner.x))
+        // For each eye, identify the medial (inner) and lateral (outer) canthus.
+        // Vision provides points roughly in order around the eye.
+        // Inner corner = closest to midline, outer = farthest from midline.
+        let faceMidX = (centerOf(leftPts).x + centerOf(rightPts).x) / 2.0
 
-        // Right eye: similar
-        let rightInner = rightPts[0]
-        let rightOuter = rightPts[rightPts.count / 2]
+        // Left eye: inner = closest to midline (highest x), outer = lowest x
+        let leftInner = leftPts.max(by: { $0.x < $1.x }) ?? leftPts[0]
+        let leftOuter = leftPts.min(by: { $0.x < $1.x }) ?? leftPts[leftPts.count / 2]
+
+        // Right eye: inner = closest to midline (lowest x), outer = highest x
+        let rightInner = rightPts.min(by: { $0.x < $1.x }) ?? rightPts[0]
+        let rightOuter = rightPts.max(by: { $0.x < $1.x }) ?? rightPts[rightPts.count / 2]
+
+        // Tilt = angle from inner to outer (positive = outer higher than inner)
+        let leftAngle = atan2(Double(leftOuter.y - leftInner.y), Double(leftInner.x - leftOuter.x))
         let rightAngle = atan2(Double(rightOuter.y - rightInner.y), Double(rightOuter.x - rightInner.x))
 
-        // Average tilt in degrees
         let avgRadians = (leftAngle + rightAngle) / 2.0
         return avgRadians * (180.0 / .pi)
     }
@@ -338,15 +541,12 @@ final class FaceAnalysisService {
 
         // Left gonion: ~25% from start of contour
         let leftGonionIdx = max(0, points.count / 5)
-        // Right gonion: ~75% from start
-        _ = min(points.count - 1, points.count * 4 / 5)
 
         // Use the left side for angle calculation
         let ramus = points[leftGonionIdx] // approximate gonion
         let chin = points[chinIndex]
 
         // Angle formed at the gonion
-        // Vector from gonion upward (ramus direction) vs vector to chin
         let earPoint = points[0] // top of contour ≈ ear area
 
         let v1x = Double(earPoint.x - ramus.x)
@@ -373,7 +573,6 @@ final class FaceAnalysisService {
         let faceHeight = faceTop - faceBottom
         guard faceHeight > 0.1 else { return 0.1 }
 
-        // Brow line
         let browY: Double
         if let leftBrow = landmarks.leftEyebrow, let rightBrow = landmarks.rightEyebrow {
             let browPoints = leftBrow.normalizedPoints + rightBrow.normalizedPoints
@@ -382,7 +581,6 @@ final class FaceAnalysisService {
             browY = faceTop - faceHeight * 0.33
         }
 
-        // Nose base
         let noseBaseY: Double
         if let nose = landmarks.nose {
             noseBaseY = Double(nose.normalizedPoints.map { $0.y }.min() ?? (faceBottom + faceHeight * 0.33))
@@ -396,7 +594,7 @@ final class FaceAnalysisService {
 
         let ideal: Double = 1.0 / 3.0
         let deviation = abs(upperThird - ideal) + abs(middleThird - ideal) + abs(lowerThird - ideal)
-        return deviation / 2.0 // normalized
+        return deviation / 2.0
     }
 
     /// IPD ratio: interpupillary distance / face width
@@ -457,13 +655,8 @@ final class FaceAnalysisService {
         guard let nose = landmarks.nose, let outerLips = landmarks.outerLips,
               let contour = landmarks.faceContour else { return 0.32 }
 
-        // Nose base (lowest nose point)
         let noseBaseY = Double(nose.normalizedPoints.map { $0.y }.min() ?? 0.4)
-
-        // Upper lip (highest lip point)
         let upperLipY = Double(outerLips.normalizedPoints.map { $0.y }.max() ?? 0.35)
-
-        // Chin (lowest contour point)
         let chinY = Double(contour.normalizedPoints.map { $0.y }.min() ?? 0.1)
 
         let philtrumLength = noseBaseY - upperLipY
@@ -488,14 +681,12 @@ final class FaceAnalysisService {
             medianX = ((xs.max() ?? 0.5) + (xs.min() ?? 0.5)) / 2.0
         }
 
-        // Split contour into left and right halves
         let leftPoints = points.filter { Double($0.x) < medianX }
         let rightPoints = points.filter { Double($0.x) >= medianX }
 
         let pairCount = min(leftPoints.count, rightPoints.count)
         guard pairCount > 2 else { return 0.85 }
 
-        // Mirror right points and compare distances
         var totalDeviation: Double = 0
         for i in 0..<pairCount {
             let lp = leftPoints[i]
@@ -507,7 +698,6 @@ final class FaceAnalysisService {
         }
 
         let avgDeviation = totalDeviation / Double(pairCount)
-        // Map to 0-1 where 0 deviation = 1.0 symmetry
         return max(0, 1.0 - avgDeviation * 5.0)
     }
 
@@ -518,7 +708,6 @@ final class FaceAnalysisService {
         let imageWidth = CGFloat(cgImage.width)
         let imageHeight = CGFloat(cgImage.height)
 
-        // Convert normalized bounding box to pixel coords
         let faceRect = CGRect(
             x: boundingBox.origin.x * imageWidth,
             y: (1 - boundingBox.origin.y - boundingBox.height) * imageHeight,
@@ -528,7 +717,6 @@ final class FaceAnalysisService {
 
         guard let cropped = cgImage.cropping(to: faceRect) else { return 5.5 }
 
-        // Sample pixels and measure color uniformity
         let width = cropped.width
         let height = cropped.height
         let totalPixels = width * height
@@ -538,7 +726,7 @@ final class FaceAnalysisService {
               let bytes = CFDataGetBytePtr(data) else { return 5.5 }
 
         let bytesPerPixel = cropped.bitsPerPixel / 8
-        let sampleStride = max(1, totalPixels / 500) // Sample ~500 pixels
+        let sampleStride = max(1, totalPixels / 500)
 
         var luminances: [Double] = []
         for i in stride(from: 0, to: totalPixels, by: sampleStride) {
@@ -552,16 +740,20 @@ final class FaceAnalysisService {
 
         guard luminances.count > 10 else { return 5.5 }
 
-        // Calculate coefficient of variation (lower = more uniform = better skin)
         let mean = luminances.reduce(0, +) / Double(luminances.count)
         let variance = luminances.reduce(0) { $0 + ($1 - mean) * ($1 - mean) } / Double(luminances.count)
         let cv = sqrt(variance) / max(mean, 1.0)
 
-        // Map CV to score: 0.05 = excellent (9+), 0.15 = average (5), 0.30+ = poor (2)
-        if cv < 0.05 { return 9.0 + (0.05 - cv) * 20 }
-        if cv < 0.10 { return 7.0 + (0.10 - cv) * 40 }
-        if cv < 0.18 { return 5.0 + (0.18 - cv) * 25 }
-        if cv < 0.30 { return 3.0 + (0.30 - cv) * 16.7 }
+        // Too-low CV can indicate flat/washed-out image (ring light blowout, puffed cheeks)
+        // Natural skin has SOME texture variation. Penalize both extremes.
+        if cv < 0.03 {
+            // Suspiciously uniform — likely blown out or distorted
+            return 6.0
+        }
+        if cv < 0.06 { return 8.0 + (0.06 - cv) / 0.03 * 1.5 }
+        if cv < 0.10 { return 7.0 + (0.10 - cv) / 0.04 * 1.0 }
+        if cv < 0.18 { return 5.0 + (0.18 - cv) / 0.08 * 2.0 }
+        if cv < 0.30 { return 3.0 + (0.30 - cv) / 0.12 * 2.0 }
         return max(1.5, 3.0 - (cv - 0.30) * 10)
     }
 
@@ -605,11 +797,9 @@ final class FaceAnalysisService {
 
     /// Gonial angle scoring (non-symmetric: sharp > obtuse)
     private func scoreGonialAngle(angle: Double) -> Double {
-        // Optimal: 112-123° → 8.5-10
         if Ideals.gonialRange.contains(angle) {
             return 9.0 + (1.0 - abs(angle - 117.5) / 5.5)
         }
-        // Acceptable: 108-130° → 6-8.5
         if Ideals.gonialAcceptable.contains(angle) {
             if angle < Ideals.gonialRange.lowerBound {
                 return 8.5 - (Ideals.gonialRange.lowerBound - angle) / 4.0 * 2.5
@@ -617,7 +807,6 @@ final class FaceAnalysisService {
                 return 8.5 - (angle - Ideals.gonialRange.upperBound) / 7.0 * 2.5
             }
         }
-        // >130° is "less desirable" per the guide
         if angle > 130 {
             return max(2.0, 6.0 - (angle - 130) / 10.0 * 4.0)
         }
@@ -625,12 +814,13 @@ final class FaceAnalysisService {
     }
 
     /// Jawline definition: estimated from contour sharpness
+    /// Fixed: uses median angle change instead of max to prevent distortion boosting
     private func estimateJawlineDefinition(landmarks: VNFaceLandmarks2D) -> Double {
         guard let contour = landmarks.faceContour else { return 5.5 }
         let points = contour.normalizedPoints
         guard points.count >= 10 else { return 5.5 }
 
-        // Measure angular changes along the jawline (sharper transitions = better definition)
+        // Measure angular changes along the jawline
         var angleChanges: [Double] = []
         for i in 2..<points.count {
             let v1x = Double(points[i-1].x - points[i-2].x)
@@ -644,18 +834,35 @@ final class FaceAnalysisService {
             angleChanges.append(angle)
         }
 
-        let maxAngleChange = angleChanges.max() ?? 0
-        // Sharper angle changes ≈ more defined jawline
-        // Map: 0.3+ radians = very defined (9+), <0.1 = round/undefined (3-5)
-        let score = 3.0 + maxAngleChange * 20.0
-        return score.smvClamped(to: 2.0...9.5)
+        guard !angleChanges.isEmpty else { return 5.5 }
+
+        // Use the 75th percentile angle change (not max).
+        // Max is easily gamed by puffing cheeks which creates ONE sharp transition.
+        // A truly defined jawline has CONSISTENT sharpness across multiple points.
+        let sorted = angleChanges.sorted()
+        let p75Index = Int(Double(sorted.count) * 0.75)
+        let p75Angle = sorted[min(p75Index, sorted.count - 1)]
+
+        // Also check consistency: std deviation of angle changes
+        // Low std dev = smooth, consistent jaw (good). High = irregular (bad/distorted).
+        let mean = angleChanges.reduce(0, +) / Double(angleChanges.count)
+        let variance = angleChanges.reduce(0) { $0 + ($1 - mean) * ($1 - mean) } / Double(angleChanges.count)
+        let stdDev = sqrt(variance)
+
+        // Consistency bonus/penalty (0.8 - 1.1)
+        let consistencyFactor: Double
+        if stdDev < 0.05 { consistencyFactor = 1.1 }    // Very consistent jaw
+        else if stdDev < 0.10 { consistencyFactor = 1.0 } // Normal
+        else if stdDev < 0.20 { consistencyFactor = 0.90 } // Somewhat irregular
+        else { consistencyFactor = 0.80 }                   // Very irregular (likely distorted)
+
+        // Score from 75th percentile angle
+        let rawScore = 3.0 + p75Angle * 18.0
+        return (rawScore * consistencyFactor).smvClamped(to: 2.0...9.5)
     }
 
     /// Facial thirds scoring
     private func scoreThirds(deviation: Double) -> Double {
-        // 0 deviation = perfect thirds = 10
-        // 0.05 = small deviation = 7
-        // 0.15+ = significant = 3
         if deviation < 0.02 { return 9.5 + (0.02 - deviation) * 25 }
         if deviation < 0.05 { return 7.0 + (0.05 - deviation) / 0.03 * 2.5 }
         if deviation < 0.10 { return 5.0 + (0.10 - deviation) / 0.05 * 2.0 }
@@ -664,37 +871,22 @@ final class FaceAnalysisService {
 
     /// Symmetry scoring
     private func scoreSymmetry(ratio: Double) -> Double {
-        // >0.95 = excellent, 0.92 = good, <0.80 = poor
         if ratio > 0.97 { return 9.5 + (ratio - 0.97) * 16.7 }
         if ratio > 0.92 { return 7.5 + (ratio - 0.92) / 0.05 * 2.0 }
         if ratio > 0.85 { return 5.0 + (ratio - 0.85) / 0.07 * 2.5 }
         return max(1.5, 5.0 - (0.85 - ratio) / 0.15 * 3.5)
     }
 
-    /// Bell curve shaping: distributes scores naturally.
-    /// Most people land 4-6. Attractive 6-8. Elite 8-9.5. Full 0-10 range possible.
+    /// Bell curve shaping with wider spread.
+    /// Uses steeper sigmoid so scores differentiate more clearly.
+    /// Most people land 4-6. Attractive 6.5-8. Elite 8-9.5.
     private func applyBellCurve(rawScore: Double) -> Double {
-        // Use a true sigmoid to compress extremes while preserving spread.
-        // The raw weighted score tends to be 4-8 for most faces.
-        //
-        // Target distribution:
-        //   Raw 10  → Final ~9.8 (near-perfect theoretical max)
-        //   Raw 9   → Final ~8.8
-        //   Raw 8   → Final ~7.9
-        //   Raw 7   → Final ~6.8
-        //   Raw 6   → Final ~5.6
-        //   Raw 5   → Final ~4.5
-        //   Raw 4   → Final ~3.5
-        //   Raw 3   → Final ~2.5
-        //   Raw 2   → Final ~1.7
-        //   Raw 1   → Final ~1.0
-
-        // Gentle sigmoid centered at 5.5, scaled to fill 0-10
-        let k = 0.45 // steepness — lower = gentler curve
+        // Steeper sigmoid for better differentiation
+        let k = 0.55 // steeper than before (was 0.45)
         let midpoint = 5.5
         let sigmoid = 1.0 / (1.0 + exp(-k * (rawScore - midpoint)))
-        // Map sigmoid (0-1) to score (0-10)
-        return sigmoid * 10.0
+        // Map sigmoid (0-1) to score (0.5-10) with slight floor
+        return 0.5 + sigmoid * 9.5
     }
 
     // MARK: - Geometry Helpers
