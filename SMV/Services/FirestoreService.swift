@@ -177,6 +177,34 @@ final class FirestoreService {
         }
     }
 
+    // MARK: - Comments
+
+    func saveComment(
+        postId: String,
+        authorId: String,
+        authorName: String,
+        body: String
+    ) async {
+        let data: [String: Any] = [
+            "postId": postId,
+            "authorId": authorId,
+            "authorName": authorName,
+            "body": body,
+            "createdAt": FieldValue.serverTimestamp(),
+        ]
+
+        do {
+            try await db.collection("posts").document(postId)
+                .collection("comments").addDocument(data: data)
+            // Increment comment count on post
+            try await db.collection("posts").document(postId).updateData([
+                "commentCount": FieldValue.increment(Int64(1))
+            ])
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
     // MARK: - Leaderboard
 
     func fetchLeaderboard(

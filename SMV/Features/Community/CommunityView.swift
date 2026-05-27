@@ -78,7 +78,7 @@ struct CommunityView: View {
 
     private func categoryCard(emoji: String, title: String, description: String) -> some View {
         Button {
-            // Navigate to category threads
+            router.push(.forumCategory(title: title, emoji: emoji))
         } label: {
             GlassmorphicCard(padding: SMVSpacing.lg) {
                 HStack(spacing: SMVSpacing.md) {

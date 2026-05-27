@@ -2,7 +2,7 @@
 //  EditProfileView.swift
 //  SMV
 //
-//  Clean form to edit user profile.
+//  Edit user profile with Firestore sync.
 //
 
 import SwiftUI
@@ -10,10 +10,14 @@ import SwiftUI
 struct EditProfileView: View {
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(AuthService.self) private var auth
+    @Environment(FirestoreService.self) private var firestore
+    @Environment(HapticService.self) private var haptics
     @State private var displayName: String
     @State private var handle: String
     @State private var bio: String
     @State private var selectedGender: Gender
+    @State private var isSaving = false
 
     enum Gender: String, CaseIterable {
         case male = "Male"
@@ -31,74 +35,79 @@ struct EditProfileView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(spacing: SMVSpacing.xxl) {
-                    // Avatar
-                    VStack(spacing: SMVSpacing.md) {
-                        ZStack {
-                            Circle()
-                                .fill(Color.smvSurface2)
-                                .frame(width: 80, height: 80)
-                            Text(displayName.prefix(1).uppercased())
-                                .font(SMVFont.displaySmall())
-                                .foregroundStyle(Color.smvCyan)
-                        }
-                        Button("Change Photo") { }
-                            .font(SMVFont.caption())
+        ScrollView {
+            VStack(spacing: SMVSpacing.xxl) {
+                // Avatar
+                VStack(spacing: SMVSpacing.md) {
+                    ZStack {
+                        Circle()
+                            .fill(Color.smvSurface2)
+                            .frame(width: 80, height: 80)
+                        Text(displayName.prefix(1).uppercased())
+                            .font(SMVFont.displaySmall())
                             .foregroundStyle(Color.smvCyan)
                     }
-                    .padding(.top, SMVSpacing.xxl)
+                    Button("Change Photo") { }
+                        .font(SMVFont.caption())
+                        .foregroundStyle(Color.smvCyan)
+                }
+                .padding(.top, SMVSpacing.xxl)
 
-                    // Fields
-                    VStack(spacing: SMVSpacing.lg) {
-                        fieldRow(title: "Display Name", text: $displayName, placeholder: "Your name")
-                        fieldRow(title: "Handle", text: $handle, placeholder: "username")
-                        bioRow(title: "Bio", text: $bio, placeholder: "Tell us about your journey")
+                // Fields
+                VStack(spacing: SMVSpacing.lg) {
+                    fieldRow(title: "Display Name", text: $displayName, placeholder: "Your name")
+                    fieldRow(title: "Handle", text: $handle, placeholder: "username")
+                    bioRow(title: "Bio", text: $bio, placeholder: "Tell us about your journey")
 
-                        // Gender picker
-                        VStack(alignment: .leading, spacing: SMVSpacing.sm) {
-                            Text("Gender")
-                                .font(SMVFont.micro())
-                                .foregroundStyle(Color.smvTextTertiary)
-                                .textCase(.uppercase)
-                                .tracking(1)
+                    // Gender picker
+                    VStack(alignment: .leading, spacing: SMVSpacing.sm) {
+                        Text("Gender")
+                            .font(SMVFont.micro())
+                            .foregroundStyle(Color.smvTextTertiary)
+                            .textCase(.uppercase)
+                            .tracking(1)
 
-                            HStack(spacing: SMVSpacing.sm) {
-                                ForEach(Gender.allCases, id: \.self) { gender in
-                                    Button {
-                                        selectedGender = gender
-                                    } label: {
-                                        Text(gender.rawValue)
-                                            .font(SMVFont.caption())
-                                            .foregroundStyle(selectedGender == gender ? .white : Color.smvTextSecondary)
-                                            .padding(.horizontal, SMVSpacing.lg)
-                                            .padding(.vertical, SMVSpacing.sm)
-                                            .background(
-                                                RoundedRectangle(cornerRadius: SMVRadius.sm)
-                                                    .fill(selectedGender == gender ? Color.smvCyan.opacity(0.2) : Color.smvSurface2)
-                                            )
-                                    }
+                        HStack(spacing: SMVSpacing.sm) {
+                            ForEach(Gender.allCases, id: \.self) { gender in
+                                Button {
+                                    selectedGender = gender
+                                } label: {
+                                    Text(gender.rawValue)
+                                        .font(SMVFont.caption())
+                                        .foregroundStyle(selectedGender == gender ? .white : Color.smvTextSecondary)
+                                        .padding(.horizontal, SMVSpacing.lg)
+                                        .padding(.vertical, SMVSpacing.sm)
+                                        .background(
+                                            RoundedRectangle(cornerRadius: SMVRadius.sm)
+                                                .fill(selectedGender == gender ? Color.smvCyan.opacity(0.2) : Color.smvSurface2)
+                                        )
                                 }
                             }
                         }
                     }
-                    .padding(.horizontal, SMVSpacing.xxl)
                 }
+                .padding(.horizontal, SMVSpacing.xxl)
             }
-            .background(Color.smvBackground)
-            .navigationTitle("Edit Profile")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                        .foregroundStyle(Color.smvTextSecondary)
+        }
+        .background(Color.smvBackground)
+        .navigationTitle("Edit Profile")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbarColorScheme(.dark, for: .navigationBar)
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                Button {
+                    save()
+                } label: {
+                    if isSaving {
+                        ProgressView()
+                            .tint(Color.smvCyan)
+                    } else {
+                        Text("Save")
+                            .foregroundStyle(Color.smvCyan)
+                            .fontWeight(.semibold)
+                    }
                 }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") { save() }
-                        .foregroundStyle(Color.smvCyan)
-                        .fontWeight(.semibold)
-                }
+                .disabled(isSaving || displayName.isEmpty)
             }
         }
     }
@@ -151,11 +160,35 @@ struct EditProfileView: View {
     }
 
     private func save() {
+        isSaving = true
+        haptics.mediumImpact()
+
+        // Save locally
         let defaults = UserDefaults.standard
         defaults.set(displayName, forKey: "smv_displayName")
         defaults.set(handle, forKey: "smv_handle")
         defaults.set(bio, forKey: "smv_bio")
         defaults.set(selectedGender.rawValue, forKey: "smv_gender")
-        dismiss()
+
+        // Update AuthService display name
+        auth.completeProfileSetup(name: displayName, handle: handle)
+
+        // Sync to Firestore
+        if let userId = auth.currentUserId {
+            Task {
+                await firestore.saveUserProfile(
+                    userId: userId,
+                    displayName: displayName,
+                    handle: handle,
+                    bio: bio,
+                    gender: selectedGender.rawValue
+                )
+                isSaving = false
+                dismiss()
+            }
+        } else {
+            isSaving = false
+            dismiss()
+        }
     }
 }

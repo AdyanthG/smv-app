@@ -64,6 +64,8 @@ final class Router {
         case referrals
         case privacyPolicy
         case termsOfService
+        case forumCategory(title: String, emoji: String)
+        case threadDetail(threadId: String)
     }
 
     // ── Modal Sheets ──
@@ -73,13 +75,15 @@ final class Router {
         case paywall
         case scanOptions
         case shareCard(scanId: String)
+        case createThread(category: String)
 
         var id: String {
             switch self {
-            case .createPost:         return "createPost"
-            case .paywall:            return "paywall"
-            case .scanOptions:        return "scanOptions"
-            case .shareCard(let id):  return "shareCard_\(id)"
+            case .createPost:              return "createPost"
+            case .paywall:                 return "paywall"
+            case .scanOptions:             return "scanOptions"
+            case .shareCard(let id):       return "shareCard_\(id)"
+            case .createThread(let cat):   return "createThread_\(cat)"
             }
         }
     }

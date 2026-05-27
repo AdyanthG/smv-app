@@ -45,6 +45,10 @@ struct MainTabView: View {
                             PrivacyPolicyView()
                         case .termsOfService:
                             TermsOfServiceView()
+                        case .forumCategory(let title, let emoji):
+                            ThreadListView(categoryTitle: title, categoryEmoji: emoji)
+                        case .threadDetail(let threadId):
+                            ThreadDetailView(threadId: threadId)
                         }
                     }
             }
@@ -65,6 +69,8 @@ struct MainTabView: View {
                 Text("Scan Options")
             case .shareCard(let scanId):
                 Text("Share: \(scanId)")
+            case .createThread(let category):
+                CreateThreadView(category: category)
             }
         }
         .fullScreenCover(item: $router.presentedFullScreen) { dest in
@@ -203,6 +209,7 @@ private struct ScanTabButton: View {
         .environment(HapticService())
         .environment(AuthService())
         .environment(SubscriptionManager())
+        .environment(FirestoreService())
         .modelContainer(for: [
             UserProfile.self,
             ScanResult.self,
@@ -214,5 +221,6 @@ private struct ScanTabButton: View {
             ForumCategory.self,
             ForumThread.self,
             ForumReply.self,
+            Comment.self,
         ], inMemory: true)
 }

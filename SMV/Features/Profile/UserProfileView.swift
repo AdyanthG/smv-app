@@ -2,7 +2,7 @@
 //  UserProfileView.swift
 //  SMV
 //
-//  Public profile — viewed when tapping a user in leaderboard or feed.
+//  Public profile — fetches real data from Firestore.
 //
 
 import SwiftUI
@@ -10,11 +10,22 @@ import SwiftUI
 struct UserProfileView: View {
 
     let userId: String
-    let displayName: String
-    let score: Double
+    var displayName: String = ""
+    var score: Double = 0
     var handle: String = ""
 
-    private var tier: ScoreTier { ScoreTier.from(score: score) }
+    @Environment(Router.self) private var router
+    @Environment(FirestoreService.self) private var firestore
+    @State private var profileName: String = ""
+    @State private var profileHandle: String = ""
+    @State private var profileScore: Double = 0
+    @State private var profileBio: String = ""
+    @State private var scanCount: Int = 0
+    @State private var bestScore: Double = 0
+    @State private var streak: Int = 0
+    @State private var isLoaded = false
+
+    private var tier: ScoreTier { ScoreTier.from(score: profileScore) }
 
     var body: some View {
         ScrollView {
@@ -30,54 +41,65 @@ struct UserProfileView: View {
                                 Circle()
                                     .stroke(tier.color.opacity(0.3), lineWidth: 1)
                             )
-                        Text(displayName.prefix(1).uppercased())
+                        Text(profileName.prefix(1).uppercased())
                             .font(SMVFont.displaySmall())
                             .foregroundStyle(tier.color)
                     }
 
                     VStack(spacing: SMVSpacing.xs) {
-                        Text(displayName)
+                        Text(profileName)
                             .font(SMVFont.headline())
                             .foregroundStyle(.white)
-                        if !handle.isEmpty {
-                            Text("@\(handle)")
+                        if !profileHandle.isEmpty {
+                            Text("@\(profileHandle)")
                                 .font(SMVFont.caption())
                                 .foregroundStyle(Color.smvTextTertiary)
                         }
                     }
 
-                    // Score
-                    VStack(spacing: SMVSpacing.xs) {
-                        Text(score.scoreFormatted)
-                            .font(SMVFont.score())
-                            .foregroundStyle(tier.color)
+                    // Bio
+                    if !profileBio.isEmpty {
+                        Text(profileBio)
+                            .font(SMVFont.body())
+                            .foregroundStyle(Color.smvTextSecondary)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, SMVSpacing.xxl)
+                    }
 
-                        HStack(spacing: SMVSpacing.sm) {
-                            Text(tier.emoji)
-                            Text(tier.rawValue)
-                                .font(SMVFont.caption())
+                    // Score
+                    if profileScore > 0 {
+                        VStack(spacing: SMVSpacing.xs) {
+                            Text(profileScore.scoreFormatted)
+                                .font(SMVFont.score())
                                 .foregroundStyle(tier.color)
+
+                            HStack(spacing: SMVSpacing.sm) {
+                                Text(tier.emoji)
+                                Text(tier.rawValue)
+                                    .font(SMVFont.caption())
+                                    .foregroundStyle(tier.color)
+                            }
+                            .padding(.horizontal, SMVSpacing.md)
+                            .padding(.vertical, SMVSpacing.xs)
+                            .background(
+                                Capsule().fill(tier.color.opacity(0.1))
+                            )
                         }
-                        .padding(.horizontal, SMVSpacing.md)
-                        .padding(.vertical, SMVSpacing.xs)
-                        .background(
-                            Capsule().fill(tier.color.opacity(0.1))
-                        )
                     }
                 }
                 .padding(.top, SMVSpacing.xxl)
 
                 // Stats
                 HStack(spacing: 0) {
-                    statItem(value: "12", label: "Scans")
+                    statItem(value: "\(scanCount)", label: "Scans")
+                    Divider()
+                        .frame(height: 32)
+                        .overlay(Color.smvSurface2)
+                    statItem(value: bestScore > 0 ? String(format: "%.1f", bestScore) : "—", label: "Best")
                     Divider()
                         .frame(height: 32)
                         .overlay(Color.smvSurface2)
                     statItem(value: tier.rarity, label: "Rarity")
-                    Divider()
-                        .frame(height: 32)
-                        .overlay(Color.smvSurface2)
-                    statItem(value: "7", label: "Streak")
                 }
                 .padding(.vertical, SMVSpacing.lg)
                 .background(Color.smvSurface0)
@@ -96,19 +118,32 @@ struct UserProfileView: View {
                         .foregroundStyle(Color.smvTextTertiary)
                         .tracking(1)
 
-                    LazyVGrid(columns: [
-                        GridItem(.flexible(), spacing: SMVSpacing.sm),
-                        GridItem(.flexible(), spacing: SMVSpacing.sm),
-                        GridItem(.flexible(), spacing: SMVSpacing.sm),
-                    ], spacing: SMVSpacing.sm) {
-                        ForEach(0..<6, id: \.self) { _ in
-                            RoundedRectangle(cornerRadius: SMVRadius.sm)
-                                .fill(Color.smvSurface1)
-                                .aspectRatio(1, contentMode: .fit)
-                                .overlay(
-                                    Image(systemName: "viewfinder")
-                                        .foregroundStyle(Color.smvTextTertiary.opacity(0.5))
-                                )
+                    if scanCount == 0 {
+                        VStack(spacing: SMVSpacing.md) {
+                            Image(systemName: "viewfinder")
+                                .font(.system(size: 32))
+                                .foregroundStyle(Color.smvTextTertiary)
+                            Text("No scans yet")
+                                .font(SMVFont.caption())
+                                .foregroundStyle(Color.smvTextSecondary)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, SMVSpacing.xxl)
+                    } else {
+                        LazyVGrid(columns: [
+                            GridItem(.flexible(), spacing: SMVSpacing.sm),
+                            GridItem(.flexible(), spacing: SMVSpacing.sm),
+                            GridItem(.flexible(), spacing: SMVSpacing.sm),
+                        ], spacing: SMVSpacing.sm) {
+                            ForEach(0..<min(scanCount, 6), id: \.self) { _ in
+                                RoundedRectangle(cornerRadius: SMVRadius.sm)
+                                    .fill(Color.smvSurface1)
+                                    .aspectRatio(1, contentMode: .fit)
+                                    .overlay(
+                                        Image(systemName: "viewfinder")
+                                            .foregroundStyle(Color.smvTextTertiary.opacity(0.5))
+                                    )
+                            }
                         }
                     }
                 }
@@ -118,6 +153,34 @@ struct UserProfileView: View {
         .background(Color.smvBackground)
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbarColorScheme(.dark, for: .navigationBar)
+        .task {
+            if !isLoaded {
+                // Use passed values as defaults
+                profileName = displayName.isEmpty ? "User" : displayName
+                profileScore = score
+                profileHandle = handle
+
+                // Fetch real data from Firestore
+                if let data = await firestore.fetchUserProfile(userId: userId) {
+                    profileName = data["displayName"] as? String ?? profileName
+                    profileHandle = data["handle"] as? String ?? profileHandle
+                    profileBio = data["bio"] as? String ?? ""
+                    profileScore = data["latestScore"] as? Double ?? profileScore
+                    bestScore = data["bestScore"] as? Double ?? profileScore
+                    scanCount = data["scanCount"] as? Int ?? 0
+                }
+
+                let stats = await firestore.fetchUserStats(userId: userId)
+                if stats.scanCount > 0 {
+                    scanCount = stats.scanCount
+                    bestScore = stats.bestScore
+                    streak = stats.streak
+                }
+
+                isLoaded = true
+            }
+        }
     }
 
     private func statItem(value: String, label: String) -> some View {
