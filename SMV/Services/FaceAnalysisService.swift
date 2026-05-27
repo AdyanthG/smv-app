@@ -414,7 +414,7 @@ final class FaceAnalysisService {
     // MARK: - Distortion Detection
 
     /// Detects unnatural facial distortion (puffed cheeks, fish face,
-    /// tongue out, etc.) by checking for implausible ratio combinations.
+    /// double chin, tongue out, etc.) by checking for implausible ratio combinations.
     private func detectDistortion(
         fwhr: Double,
         lipRatio: Double,
@@ -424,27 +424,72 @@ final class FaceAnalysisService {
     ) -> Double {
         var penalty: Double = 1.0
 
-        // ── Puffed cheeks: abnormally wide face + compressed vertical features ──
-        // Normal FWHR is 1.65-2.25. Puffing cheeks pushes > 2.3
-        if fwhr > 2.4 {
-            // Extremely wide face = puffed cheeks or distortion
-            penalty *= max(0.65, 1.0 - (fwhr - 2.4) * 1.5)
-        } else if fwhr > 2.25 {
-            penalty *= max(0.85, 1.0 - (fwhr - 2.25) * 0.8)
+        // ── Puffed cheeks: abnormally wide face ──
+        // Lowered thresholds — puffed cheeks often land 2.0-2.3
+        if fwhr > 2.20 {
+            penalty *= max(0.60, 1.0 - (fwhr - 2.20) * 1.8)
+        } else if fwhr > 2.10 {
+            penalty *= max(0.80, 1.0 - (fwhr - 2.10) * 1.2)
         }
 
-        // ── Fish face / duck lips: abnormally high lip ratio ──
-        if lipRatio > 0.55 {
-            penalty *= max(0.70, 1.0 - (lipRatio - 0.55) * 2.0)
+        // ── Fish face / duck lips ──
+        if lipRatio > 0.50 {
+            penalty *= max(0.65, 1.0 - (lipRatio - 0.50) * 2.5)
         }
 
-        // ── Cross-validate: if FWHR is high AND nose appears compressed,
-        //    that's a strong distortion signal (cheeks push landmarks) ──
-        if fwhr > 2.15 && noseWidth < 0.18 {
-            penalty *= 0.80
+        // ── Cross-validate: wide face + compressed nose = cheek puffing ──
+        if fwhr > 2.05 && noseWidth < 0.20 {
+            penalty *= 0.82
         }
 
-        // ── Mouth gaping: check if lips are abnormally far apart ──
+        // ── Double chin detection ──
+        // A double chin causes the jaw contour to sag downward.
+        // Measured by comparing the lowest contour point to the chin baseline.
+        if let contour = landmarks.faceContour, let nose = landmarks.nose {
+            let contourPts = contour.normalizedPoints
+            let nosePts = nose.normalizedPoints
+
+            if contourPts.count >= 8 && nosePts.count >= 2 {
+                // Jaw bottom: lowest Y on face contour
+                let jawBottomY = contourPts.map { Double($0.y) }.min() ?? 0
+                // Nose bottom: lowest Y on nose
+                let noseBottomY = nosePts.map { Double($0.y) }.min() ?? 0
+                // Face contour top points (sides of face near ears)
+                let contourTopY = contourPts.map { Double($0.y) }.max() ?? 0
+
+                let faceHeight = contourTopY - jawBottomY
+                let noseToJaw = noseBottomY - jawBottomY
+
+                // In a normal face, nose-to-jaw is ~25-35% of face height.
+                // A double chin extends the jaw contour downward, making this ratio > 40%.
+                if faceHeight > 0 {
+                    let chinRatio = noseToJaw / faceHeight
+                    if chinRatio > 0.45 {
+                        // Severe double chin — strong penalty
+                        penalty *= max(0.60, 1.0 - (chinRatio - 0.45) * 4.0)
+                    } else if chinRatio > 0.38 {
+                        // Mild double chin
+                        penalty *= max(0.82, 1.0 - (chinRatio - 0.38) * 2.5)
+                    }
+                }
+
+                // Also check contour width vs height ratio
+                // Puffed cheeks make the contour very wide relative to height
+                let contourXs = contourPts.map { Double($0.x) }
+                let contourWidth = (contourXs.max() ?? 0) - (contourXs.min() ?? 0)
+                if faceHeight > 0 {
+                    let widthToHeight = contourWidth / faceHeight
+                    // Normal is ~0.7-0.9, puffed cheeks push > 1.0
+                    if widthToHeight > 1.05 {
+                        penalty *= max(0.65, 1.0 - (widthToHeight - 1.05) * 3.0)
+                    } else if widthToHeight > 0.95 {
+                        penalty *= max(0.85, 1.0 - (widthToHeight - 0.95) * 1.5)
+                    }
+                }
+            }
+        }
+
+        // ── Mouth gaping ──
         if let outerLips = landmarks.outerLips, let innerLips = landmarks.innerLips {
             let outerPts = outerLips.normalizedPoints
             let innerPts = innerLips.normalizedPoints
@@ -455,14 +500,12 @@ final class FaceAnalysisService {
             let outerHeight = (outerYs.max() ?? 0) - (outerYs.min() ?? 0)
             let innerHeight = (innerYs.max() ?? 0) - (innerYs.min() ?? 0)
 
-            // If mouth is wide open, inner lip gap is large relative to outer
-            if innerHeight > 0.02 && innerHeight / outerHeight > 0.5 {
-                // Mouth is open — penalize (should scan with mouth closed)
-                penalty *= 0.85
+            if innerHeight > 0.02 && outerHeight > 0 && innerHeight / outerHeight > 0.45 {
+                penalty *= 0.82
             }
         }
 
-        return penalty.smvClamped(to: 0.50...1.0)
+        return penalty.smvClamped(to: 0.40...1.0)
     }
 
     // MARK: - Raw Measurement Calculations
@@ -849,16 +892,40 @@ final class FaceAnalysisService {
         let variance = angleChanges.reduce(0) { $0 + ($1 - mean) * ($1 - mean) } / Double(angleChanges.count)
         let stdDev = sqrt(variance)
 
-        // Consistency bonus/penalty (0.8 - 1.1)
+        // Consistency bonus/penalty (0.75 - 1.05)
         let consistencyFactor: Double
-        if stdDev < 0.05 { consistencyFactor = 1.1 }    // Very consistent jaw
-        else if stdDev < 0.10 { consistencyFactor = 1.0 } // Normal
-        else if stdDev < 0.20 { consistencyFactor = 0.90 } // Somewhat irregular
-        else { consistencyFactor = 0.80 }                   // Very irregular (likely distorted)
+        if stdDev < 0.04 {
+            // VERY uniform curvature = likely a round/bloated face (puffed cheeks)
+            // Real defined jawlines have SOME variation (sharp jaw corners vs straight lines)
+            consistencyFactor = 0.85
+        } else if stdDev < 0.08 {
+            consistencyFactor = 1.05  // Some variation = good, natural jaw
+        } else if stdDev < 0.15 {
+            consistencyFactor = 0.95  // Moderate variation
+        } else if stdDev < 0.25 {
+            consistencyFactor = 0.85  // Somewhat irregular
+        } else {
+            consistencyFactor = 0.75  // Very irregular (likely distorted)
+        }
+
+        // Check for chin sag (double chin): compare the midpoint Y of contour 
+        // to the endpoints Y — a sagging chin drops the middle well below the ear line
+        let midIndex = points.count / 2
+        let midY = Double(points[midIndex].y)
+        let leftEarY = Double(points[0].y)
+        let rightEarY = Double(points[points.count - 1].y)
+        let earLineY = (leftEarY + rightEarY) / 2.0
+        let chinDrop = earLineY - midY  // positive = chin below ears (Vision coords: 0=bottom)
+
+        var chinPenalty: Double = 1.0
+        // In normalized coords, large chinDrop means chin hangs well below ears
+        if chinDrop > 0.25 {
+            chinPenalty = max(0.70, 1.0 - (chinDrop - 0.25) * 3.0)
+        }
 
         // Score from 75th percentile angle
         let rawScore = 3.0 + p75Angle * 18.0
-        return (rawScore * consistencyFactor).smvClamped(to: 2.0...9.5)
+        return (rawScore * consistencyFactor * chinPenalty).smvClamped(to: 2.0...9.0)
     }
 
     /// Facial thirds scoring
