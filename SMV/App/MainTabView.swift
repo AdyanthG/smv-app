@@ -34,7 +34,7 @@ struct MainTabView: View {
                         case .notifications:
                             NotificationsView()
                         case .challengeDetail(let id):
-                            Text("Challenge: \(id)")
+                            ChallengeDetailView(challengeId: id)
                         case .community:
                             CommunityView()
                         case .progress:

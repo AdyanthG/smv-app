@@ -2,7 +2,7 @@
 //  UserProfileView.swift
 //  SMV
 //
-//  Public profile — fetches real data from Firestore.
+//  Public profile — fetches real data from Firestore with follow system.
 //
 
 import SwiftUI
@@ -16,16 +16,22 @@ struct UserProfileView: View {
 
     @Environment(Router.self) private var router
     @Environment(FirestoreService.self) private var firestore
+    @Environment(AuthService.self) private var auth
+    @Environment(HapticService.self) private var haptics
     @State private var profileName: String = ""
     @State private var profileHandle: String = ""
     @State private var profileScore: Double = 0
     @State private var profileBio: String = ""
     @State private var scanCount: Int = 0
     @State private var bestScore: Double = 0
-    @State private var streak: Int = 0
+    @State private var followerCount: Int = 0
+    @State private var followingCount: Int = 0
+    @State private var isFollowing: Bool = false
     @State private var isLoaded = false
+    @State private var showShareSheet = false
 
     private var tier: ScoreTier { ScoreTier.from(score: profileScore) }
+    private var isOwnProfile: Bool { userId == auth.currentUserId }
 
     var body: some View {
         ScrollView {
@@ -95,23 +101,37 @@ struct UserProfileView: View {
                     Divider()
                         .frame(height: 32)
                         .overlay(Color.smvSurface2)
-                    statItem(value: bestScore > 0 ? String(format: "%.1f", bestScore) : "—", label: "Best")
+                    statItem(value: "\(followerCount)", label: "Followers")
                     Divider()
                         .frame(height: 32)
                         .overlay(Color.smvSurface2)
-                    statItem(value: tier.rarity, label: "Rarity")
+                    statItem(value: "\(followingCount)", label: "Following")
                 }
                 .padding(.vertical, SMVSpacing.lg)
                 .background(Color.smvSurface0)
 
                 // Actions
-                HStack(spacing: SMVSpacing.md) {
-                    SecondaryButton(title: "Follow", icon: "plus") { }
-                    SecondaryButton(title: "Share", icon: "square.and.arrow.up") { }
+                if !isOwnProfile {
+                    HStack(spacing: SMVSpacing.md) {
+                        if isFollowing {
+                            SecondaryButton(title: "Unfollow", icon: "person.badge.minus") {
+                                haptics.mediumImpact()
+                                Task { await toggleFollow() }
+                            }
+                        } else {
+                            GradientButton(title: "Follow", icon: "plus") {
+                                haptics.mediumImpact()
+                                Task { await toggleFollow() }
+                            }
+                        }
+                        SecondaryButton(title: "Share", icon: "square.and.arrow.up") {
+                            showShareSheet = true
+                        }
+                    }
+                    .padding(.horizontal, SMVSpacing.xxl)
                 }
-                .padding(.horizontal, SMVSpacing.xxl)
 
-                // Recent scans placeholder
+                // Recent scans
                 VStack(alignment: .leading, spacing: SMVSpacing.md) {
                     Text("RECENT SCANS")
                         .font(SMVFont.micro())
@@ -154,14 +174,16 @@ struct UserProfileView: View {
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
         .toolbarColorScheme(.dark, for: .navigationBar)
+        .sheet(isPresented: $showShareSheet) {
+            ShareSheet(items: ["Check out \(profileName)'s SMV profile! Score: \(profileScore.scoreFormatted)"])
+                .presentationDetents([.medium])
+        }
         .task {
             if !isLoaded {
-                // Use passed values as defaults
                 profileName = displayName.isEmpty ? "User" : displayName
                 profileScore = score
                 profileHandle = handle
 
-                // Fetch real data from Firestore
                 if let data = await firestore.fetchUserProfile(userId: userId) {
                     profileName = data["displayName"] as? String ?? profileName
                     profileHandle = data["handle"] as? String ?? profileHandle
@@ -175,11 +197,32 @@ struct UserProfileView: View {
                 if stats.scanCount > 0 {
                     scanCount = stats.scanCount
                     bestScore = stats.bestScore
-                    streak = stats.streak
+                }
+
+                // Fetch follow data
+                let counts = await firestore.getFollowCounts(userId: userId)
+                followerCount = counts.followers
+                followingCount = counts.following
+
+                if let myId = auth.currentUserId, myId != userId {
+                    isFollowing = await firestore.isFollowing(userId: myId, targetId: userId)
                 }
 
                 isLoaded = true
             }
+        }
+    }
+
+    private func toggleFollow() async {
+        guard let myId = auth.currentUserId else { return }
+        if isFollowing {
+            await firestore.unfollowUser(userId: myId, targetId: userId)
+            isFollowing = false
+            followerCount = max(0, followerCount - 1)
+        } else {
+            await firestore.followUser(userId: myId, targetId: userId)
+            isFollowing = true
+            followerCount += 1
         }
     }
 

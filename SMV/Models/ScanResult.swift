@@ -48,6 +48,9 @@ final class ScanResult {
     var failos: [String]
     var failoPenalty: Double
 
+    // ── Multi-angle scan flag ──
+    var isMultiAngleScan: Bool
+
     // ── Image ──
     @Attribute(.externalStorage)
     var imageData: Data?
@@ -102,6 +105,7 @@ final class ScanResult {
         rawSymmetry: Double = 0.90,
         failos: [String] = [],
         failoPenalty: Double = 1.0,
+        isMultiAngleScan: Bool = false,
         imageData: Data? = nil
     ) {
         self.id = id
@@ -127,6 +131,7 @@ final class ScanResult {
         self.rawSymmetry = rawSymmetry
         self.failos = failos
         self.failoPenalty = failoPenalty
+        self.isMultiAngleScan = isMultiAngleScan
         self.imageData = imageData
     }
 

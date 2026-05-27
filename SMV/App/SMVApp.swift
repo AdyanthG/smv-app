@@ -10,6 +10,7 @@
 import SwiftUI
 import SwiftData
 import FirebaseCore
+import FirebaseMessaging
 
 // Firebase app delegate for initialization
 class AppDelegate: NSObject, UIApplicationDelegate {
@@ -18,7 +19,26 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
         FirebaseApp.configure()
+        // Register for remote notifications
+        UNUserNotificationCenter.current().delegate = self
+        application.registerForRemoteNotifications()
         return true
+    }
+
+    func application(
+        _ application: UIApplication,
+        didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
+    ) {
+        Messaging.messaging().apnsToken = deviceToken
+    }
+}
+
+extension AppDelegate: UNUserNotificationCenterDelegate {
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification
+    ) async -> UNNotificationPresentationOptions {
+        return [.banner, .badge, .sound]
     }
 }
 
@@ -59,6 +79,7 @@ struct SMVApp: App {
     @State private var subscriptions = SubscriptionManager()
     @State private var firestore = FirestoreService()
     @State private var storage = StorageService()
+    @State private var notifications = NotificationService()
 
     var body: some Scene {
         WindowGroup {
@@ -69,10 +90,17 @@ struct SMVApp: App {
                 .environment(subscriptions)
                 .environment(firestore)
                 .environment(storage)
+                .environment(notifications)
                 .preferredColorScheme(.dark)
                 .task {
                     auth.start()
                     await subscriptions.updateSubscriptionStatus()
+                    // Request push permission
+                    await notifications.requestPermission()
+                    // Register FCM token
+                    if let userId = auth.currentUserId {
+                        await notifications.registerToken(userId: userId, firestore: firestore)
+                    }
                 }
                 .onAppear {
                     if !auth.isOnboarded {

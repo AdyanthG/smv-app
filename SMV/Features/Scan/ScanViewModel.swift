@@ -3,12 +3,15 @@
 //  SMV
 //
 //  Business logic for the face scanning flow.
+//  Supports both TrueDepth guided scanning (ARKit) and
+//  fallback single-photo mode (AVCaptureSession).
 //
 
 import SwiftUI
 import AVFoundation
 import Vision
 import PhotosUI
+import ARKit
 
 @Observable
 final class ScanViewModel: NSObject, AVCapturePhotoCaptureDelegate {
@@ -17,7 +20,8 @@ final class ScanViewModel: NSObject, AVCapturePhotoCaptureDelegate {
 
     enum ScanState {
         case idle
-        case cameraActive
+        case cameraActive        // Fallback: simple camera
+        case guidedScan          // TrueDepth: guided multi-angle
         case photoSelected(UIImage)
         case analyzing
         case complete(ScanResult)
@@ -28,17 +32,21 @@ final class ScanViewModel: NSObject, AVCapturePhotoCaptureDelegate {
     var selectedPhoto: PhotosPickerItem?
     var analysisProgress: Double = 0
 
+    // Guided scan state
+    var faceTracker = FaceTrackingService()
+    var isTrueDepthAvailable: Bool { ARFaceTrackingConfiguration.isSupported }
+
     // MARK: - Services
 
     private let analysisService = FaceAnalysisService()
 
-    // Camera
+    // Camera (fallback)
     let captureSession = AVCaptureSession()
     private let photoOutput = AVCapturePhotoOutput()
     private var isSessionConfigured = false
     private var photoContinuation: CheckedContinuation<UIImage?, Never>?
 
-    // MARK: - Camera Setup
+    // MARK: - Camera Setup (Fallback)
 
     func setupCamera() {
         guard !isSessionConfigured else { return }
@@ -60,7 +68,6 @@ final class ScanViewModel: NSObject, AVCapturePhotoCaptureDelegate {
         }
         captureSession.addOutput(photoOutput)
 
-        // Mirror front camera
         if let connection = photoOutput.connection(with: .video) {
             connection.isVideoMirrored = true
         }
@@ -85,7 +92,47 @@ final class ScanViewModel: NSObject, AVCapturePhotoCaptureDelegate {
         }
     }
 
-    // MARK: - Capture Photo
+    // MARK: - Start Scan (chooses mode)
+
+    func startScan() {
+        if isTrueDepthAvailable {
+            startGuidedScan()
+        } else {
+            startCamera()
+        }
+    }
+
+    // MARK: - Guided Scan (TrueDepth)
+
+    func startGuidedScan() {
+        faceTracker.reset()
+        faceTracker.onCaptureComplete = { [weak self] captures in
+            Task { @MainActor in
+                self?.handleGuidedCaptureComplete(captures)
+            }
+        }
+        faceTracker.startSession()
+        state = .guidedScan
+    }
+
+    func stopGuidedScan() {
+        faceTracker.stopSession()
+    }
+
+    private func handleGuidedCaptureComplete(_ captures: [AngleCapture]) {
+        // Use the frontal image for the main analysis
+        guard let frontalCapture = captures.first(where: { $0.position == .front }) else {
+            state = .error("Failed to capture frontal image")
+            return
+        }
+        // Store captures for depth metric extraction during analysis
+        self.pendingCaptures = captures
+        state = .photoSelected(frontalCapture.image)
+    }
+
+    var pendingCaptures: [AngleCapture]?
+
+    // MARK: - Capture Photo (Fallback)
 
     func capturePhoto() async -> UIImage? {
         return await withCheckedContinuation { continuation in
@@ -156,7 +203,17 @@ final class ScanViewModel: NSObject, AVCapturePhotoCaptureDelegate {
             }
         }
 
-        if let result = await analysisService.analyze(image: image, userId: userId) {
+        if var result = await analysisService.analyze(image: image, userId: userId) {
+            // If we have multi-angle captures, extract 3D metrics and apply
+            if let captures = pendingCaptures, !captures.isEmpty {
+                let depthMetrics = faceTracker.extract3DMetrics(from: captures)
+                // Apply 3D confidence multiplier
+                let adjusted = result.overallScore * depthMetrics.confidenceMultiplier
+                result.overallScore = adjusted.smvClamped(to: 0.0...10.0)
+                // Mark as multi-angle scan
+                result.isMultiAngleScan = true
+            }
+
             progressTask.cancel()
             withAnimation(.spring(duration: 0.3)) {
                 analysisProgress = 1.0
@@ -165,7 +222,6 @@ final class ScanViewModel: NSObject, AVCapturePhotoCaptureDelegate {
             // ── Cloud sync (fire-and-forget) ──
             if let firestore, let storage {
                 Task {
-                    // Upload scan image
                     if let imageData = image.jpegData(compressionQuality: 0.7) {
                         let _ = await storage.uploadScanImage(
                             userId: userId,
@@ -173,13 +229,13 @@ final class ScanViewModel: NSObject, AVCapturePhotoCaptureDelegate {
                             imageData: imageData
                         )
                     }
-                    // Save result to Firestore
                     let _ = await firestore.saveScanResult(userId: userId, result: result)
                 }
             }
 
             try? await Task.sleep(for: .milliseconds(500))
             state = .complete(result)
+            pendingCaptures = nil
         } else {
             progressTask.cancel()
             state = .error(analysisService.errorMessage ?? "Analysis failed")
@@ -192,5 +248,6 @@ final class ScanViewModel: NSObject, AVCapturePhotoCaptureDelegate {
         state = .idle
         analysisProgress = 0
         selectedPhoto = nil
+        pendingCaptures = nil
     }
 }

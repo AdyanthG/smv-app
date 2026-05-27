@@ -306,4 +306,93 @@ final class FirestoreService {
             return 0
         }
     }
+
+    // MARK: - Follow System
+
+    func followUser(userId: String, targetId: String) async {
+        let batch = db.batch()
+
+        // Add to follower's "following" subcollection
+        let followingRef = db.collection("users").document(userId)
+            .collection("following").document(targetId)
+        batch.setData(["timestamp": FieldValue.serverTimestamp()], forDocument: followingRef)
+
+        // Add to target's "followers" subcollection
+        let followersRef = db.collection("users").document(targetId)
+            .collection("followers").document(userId)
+        batch.setData(["timestamp": FieldValue.serverTimestamp()], forDocument: followersRef)
+
+        // Increment counts
+        let userRef = db.collection("users").document(userId)
+        batch.updateData(["followingCount": FieldValue.increment(Int64(1))], forDocument: userRef)
+
+        let targetRef = db.collection("users").document(targetId)
+        batch.updateData(["followerCount": FieldValue.increment(Int64(1))], forDocument: targetRef)
+
+        do {
+            try await batch.commit()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func unfollowUser(userId: String, targetId: String) async {
+        let batch = db.batch()
+
+        let followingRef = db.collection("users").document(userId)
+            .collection("following").document(targetId)
+        batch.deleteDocument(followingRef)
+
+        let followersRef = db.collection("users").document(targetId)
+            .collection("followers").document(userId)
+        batch.deleteDocument(followersRef)
+
+        let userRef = db.collection("users").document(userId)
+        batch.updateData(["followingCount": FieldValue.increment(Int64(-1))], forDocument: userRef)
+
+        let targetRef = db.collection("users").document(targetId)
+        batch.updateData(["followerCount": FieldValue.increment(Int64(-1))], forDocument: targetRef)
+
+        do {
+            try await batch.commit()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func isFollowing(userId: String, targetId: String) async -> Bool {
+        do {
+            let doc = try await db.collection("users").document(userId)
+                .collection("following").document(targetId).getDocument()
+            return doc.exists
+        } catch {
+            return false
+        }
+    }
+
+    func getFollowCounts(userId: String) async -> (followers: Int, following: Int) {
+        do {
+            let doc = try await db.collection("users").document(userId).getDocument()
+            let data = doc.data() ?? [:]
+            let followers = data["followerCount"] as? Int ?? 0
+            let following = data["followingCount"] as? Int ?? 0
+            return (followers, following)
+        } catch {
+            return (0, 0)
+        }
+    }
+
+    // MARK: - FCM Token
+
+    func saveFCMToken(userId: String, token: String) async {
+        do {
+            try await db.collection("users").document(userId).setData([
+                "fcmToken": token,
+                "tokenUpdatedAt": FieldValue.serverTimestamp(),
+            ], merge: true)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
 }
+

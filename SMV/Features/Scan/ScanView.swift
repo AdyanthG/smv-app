@@ -2,11 +2,13 @@
 //  ScanView.swift
 //  SMV
 //
-//  Face scanning interface: live camera only for authentic, fraud-proof scans.
+//  Face scanning interface with TrueDepth guided multi-angle scanning.
+//  Falls back to single-photo capture on devices without TrueDepth.
 //
 
 import SwiftUI
 import SwiftData
+import ARKit
 
 struct ScanView: View {
 
@@ -30,6 +32,8 @@ struct ScanView: View {
                 scanOptions
             case .cameraActive:
                 cameraView
+            case .guidedScan:
+                guidedScanView
             case .photoSelected(let image):
                 photoPreview(image)
             case .analyzing:
@@ -77,7 +81,9 @@ struct ScanView: View {
                     .font(SMVFont.displaySmall())
                     .foregroundStyle(.white)
 
-                Text("Use the front camera for an authentic AI-powered analysis")
+                Text(viewModel.isTrueDepthAvailable
+                     ? "Guided multi-angle scan with TrueDepth camera"
+                     : "Use the front camera for an AI-powered analysis")
                     .font(SMVFont.body())
                     .foregroundStyle(Color.smvTextSecondary)
                     .multilineTextAlignment(.center)
@@ -85,10 +91,9 @@ struct ScanView: View {
             }
 
             VStack(spacing: SMVSpacing.lg) {
-                // Camera button
                 GradientButton(title: "Start Scan", icon: "camera.fill") {
                     haptics.mediumImpact()
-                    viewModel.startCamera()
+                    viewModel.startScan()
                 }
             }
             .padding(.horizontal, SMVSpacing.xxl)
@@ -96,13 +101,15 @@ struct ScanView: View {
             // Tips
             GlassmorphicCard(padding: SMVSpacing.md) {
                 HStack(spacing: SMVSpacing.md) {
-                    Image(systemName: "lightbulb.fill")
-                        .foregroundStyle(Color.smvAmber)
+                    Image(systemName: viewModel.isTrueDepthAvailable ? "cube.fill" : "lightbulb.fill")
+                        .foregroundStyle(viewModel.isTrueDepthAvailable ? Color.smvCyan : Color.smvAmber)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Tips for best results")
+                        Text(viewModel.isTrueDepthAvailable ? "3D Multi-Angle Scan" : "Tips for best results")
                             .font(SMVFont.caption())
                             .foregroundStyle(Color.smvTextPrimary)
-                        Text("Good lighting • Front-facing • Neutral expression")
+                        Text(viewModel.isTrueDepthAvailable
+                             ? "Hold 5 positions • Auto-captures • Depth analysis"
+                             : "Good lighting • Front-facing • Neutral expression")
                             .font(SMVFont.micro())
                             .foregroundStyle(Color.smvTextSecondary)
                     }
@@ -114,32 +121,173 @@ struct ScanView: View {
         }
     }
 
-    // MARK: - Camera View
+    // MARK: - Guided Scan View (TrueDepth)
+
+    private var guidedScanView: some View {
+        ZStack {
+            // AR Camera preview
+            ARViewContainer(session: viewModel.faceTracker.arSession)
+                .ignoresSafeArea()
+
+            // Ring light overlay
+            if ringLightEnabled {
+                ringLightOverlay
+            }
+
+            // Guided overlay
+            VStack(spacing: 0) {
+                // Top: Position indicator
+                VStack(spacing: SMVSpacing.md) {
+                    // Progress dots
+                    HStack(spacing: SMVSpacing.md) {
+                        ForEach(ScanPosition.allCases, id: \.rawValue) { position in
+                            Circle()
+                                .fill(dotColor(for: position))
+                                .frame(width: 10, height: 10)
+                                .scaleEffect(position == viewModel.faceTracker.currentPosition ? 1.3 : 1.0)
+                                .animation(.spring(duration: 0.3), value: viewModel.faceTracker.currentPosition)
+                        }
+                    }
+                    .padding(.top, 60)
+
+                    Text(viewModel.faceTracker.currentPosition.label)
+                        .font(SMVFont.headline())
+                        .foregroundStyle(.white)
+                        .contentTransition(.numericText())
+                        .animation(.spring(duration: 0.3), value: viewModel.faceTracker.currentPosition)
+                }
+                .padding(.horizontal, SMVSpacing.xxl)
+                .padding(.vertical, SMVSpacing.lg)
+                .background(
+                    LinearGradient(
+                        colors: [Color.black.opacity(0.7), Color.clear],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                    .ignoresSafeArea()
+                )
+
+                Spacer()
+
+                // Center: Alignment ring
+                ZStack {
+                    // Outer ring (fills as you hold position)
+                    Circle()
+                        .trim(from: 0, to: viewModel.faceTracker.alignmentProgress)
+                        .stroke(
+                            viewModel.faceTracker.isAligned ? Color.smvEmerald : Color.smvCyan,
+                            style: StrokeStyle(lineWidth: 4, lineCap: .round)
+                        )
+                        .frame(width: 220, height: 220)
+                        .rotationEffect(.degrees(-90))
+                        .animation(.linear(duration: 0.1), value: viewModel.faceTracker.alignmentProgress)
+
+                    // Guide ring
+                    Circle()
+                        .stroke(Color.white.opacity(0.2), lineWidth: 1)
+                        .frame(width: 220, height: 220)
+
+                    // Direction arrow
+                    if viewModel.faceTracker.currentPosition != .front {
+                        Image(systemName: viewModel.faceTracker.currentPosition.icon)
+                            .font(.system(size: 40, weight: .medium))
+                            .foregroundStyle(
+                                viewModel.faceTracker.isAligned
+                                    ? Color.smvEmerald
+                                    : Color.white.opacity(0.8)
+                            )
+                            .transition(.scale.combined(with: .opacity))
+                    }
+
+                    // Face detected indicator
+                    if !viewModel.faceTracker.isFaceDetected {
+                        VStack(spacing: SMVSpacing.sm) {
+                            Image(systemName: "face.dashed")
+                                .font(.system(size: 36))
+                            Text("Position your face in frame")
+                                .font(SMVFont.caption())
+                        }
+                        .foregroundStyle(Color.smvAmber)
+                    }
+                }
+
+                Spacer()
+
+                // Bottom controls
+                HStack(spacing: SMVSpacing.xxl) {
+                    // Close
+                    Button {
+                        disableRingLight()
+                        viewModel.stopGuidedScan()
+                        viewModel.reset()
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 18, weight: .bold))
+                            .foregroundStyle(.white)
+                            .frame(width: 48, height: 48)
+                            .background(Circle().fill(.ultraThinMaterial))
+                    }
+
+                    Spacer()
+
+                    // Status text
+                    VStack(spacing: SMVSpacing.xs) {
+                        Text("\(viewModel.faceTracker.captures.count)/5")
+                            .font(SMVFont.title())
+                            .foregroundStyle(.white)
+                        Text("captured")
+                            .font(SMVFont.micro())
+                            .foregroundStyle(Color.smvTextTertiary)
+                    }
+
+                    Spacer()
+
+                    // Ring light toggle
+                    Button {
+                        toggleRingLight()
+                    } label: {
+                        Image(systemName: ringLightEnabled ? "sun.max.fill" : "sun.max")
+                            .font(.system(size: 18, weight: .bold))
+                            .foregroundStyle(ringLightEnabled ? Color.smvAmber : .white)
+                            .frame(width: 48, height: 48)
+                            .background(
+                                Circle()
+                                    .fill(ringLightEnabled
+                                        ? Color.smvAmber.opacity(0.25)
+                                        : Color.clear.opacity(0.001)
+                                    )
+                                    .overlay(
+                                        Circle().fill(.ultraThinMaterial)
+                                            .opacity(ringLightEnabled ? 0 : 1)
+                                    )
+                            )
+                    }
+                }
+                .padding(.horizontal, SMVSpacing.xxxl)
+                .padding(.bottom, 100)
+            }
+        }
+    }
+
+    private func dotColor(for position: ScanPosition) -> Color {
+        if viewModel.faceTracker.captures.contains(where: { $0.position == position }) {
+            return Color.smvEmerald
+        }
+        if position == viewModel.faceTracker.currentPosition {
+            return Color.smvCyan
+        }
+        return Color.smvSurface2
+    }
+
+    // MARK: - Camera View (Fallback)
 
     private var cameraView: some View {
         ZStack {
             CameraPreviewView(session: viewModel.captureSession)
                 .ignoresSafeArea()
 
-            // ── Persistent Ring Light ──
-            // Bright white border around the entire screen edge,
-            // acts as a soft light source for the front camera.
             if ringLightEnabled {
-                Rectangle()
-                    .fill(.clear)
-                    .ignoresSafeArea()
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 0)
-                            .stroke(Color.white.opacity(0.95), lineWidth: 60)
-                            .blur(radius: 20)
-                            .ignoresSafeArea()
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 0)
-                            .stroke(Color.white, lineWidth: 30)
-                            .ignoresSafeArea()
-                    )
-                    .allowsHitTesting(false)
+                ringLightOverlay
             }
 
             // Controls
@@ -201,9 +349,29 @@ struct ScanView: View {
                     }
                 }
                 .padding(.horizontal, SMVSpacing.xxxl)
-                .padding(.bottom, 100) // Well above the tab bar
+                .padding(.bottom, 100)
             }
         }
+    }
+
+    // MARK: - Ring Light Overlay
+
+    private var ringLightOverlay: some View {
+        Rectangle()
+            .fill(.clear)
+            .ignoresSafeArea()
+            .overlay(
+                RoundedRectangle(cornerRadius: 0)
+                    .stroke(Color.white.opacity(0.95), lineWidth: 60)
+                    .blur(radius: 20)
+                    .ignoresSafeArea()
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 0)
+                    .stroke(Color.white, lineWidth: 30)
+                    .ignoresSafeArea()
+            )
+            .allowsHitTesting(false)
     }
 
     // MARK: - Ring Light Controls
@@ -236,7 +404,6 @@ struct ScanView: View {
 
     private func triggerCapture() {
         if ringLightEnabled {
-            // Brief full-screen flash for the actual capture moment
             withAnimation(.easeIn(duration: 0.05)) {
                 captureFlash = true
             }
@@ -262,6 +429,21 @@ struct ScanView: View {
                 .ignoresSafeArea()
 
             VStack {
+                // Multi-angle badge
+                if viewModel.pendingCaptures != nil {
+                    HStack(spacing: SMVSpacing.sm) {
+                        Image(systemName: "cube.fill")
+                            .foregroundStyle(Color.smvCyan)
+                        Text("5-Angle 3D Scan")
+                            .font(SMVFont.caption())
+                            .foregroundStyle(Color.smvCyan)
+                    }
+                    .padding(.horizontal, SMVSpacing.md)
+                    .padding(.vertical, SMVSpacing.sm)
+                    .background(Capsule().fill(Color.smvCyan.opacity(0.15)))
+                    .padding(.top, 60)
+                }
+
                 Spacer()
 
                 VStack(spacing: SMVSpacing.lg) {
@@ -278,11 +460,11 @@ struct ScanView: View {
                     }
 
                     SecondaryButton(title: "Retake Photo", icon: "arrow.counterclockwise") {
-                        viewModel.startCamera()
+                        viewModel.startScan()
                     }
                 }
                 .padding(.horizontal, SMVSpacing.xxl)
-                .padding(.bottom, 100) // Above tab bar
+                .padding(.bottom, 100)
             }
         }
     }
@@ -298,6 +480,19 @@ struct ScanView: View {
     private func completeView(_ result: ScanResult) -> some View {
         VStack(spacing: SMVSpacing.xxl) {
             Spacer()
+
+            if result.isMultiAngleScan {
+                HStack(spacing: SMVSpacing.sm) {
+                    Image(systemName: "checkmark.seal.fill")
+                        .foregroundStyle(Color.smvEmerald)
+                    Text("3D Verified Scan")
+                        .font(SMVFont.caption())
+                        .foregroundStyle(Color.smvEmerald)
+                }
+                .padding(.horizontal, SMVSpacing.md)
+                .padding(.vertical, SMVSpacing.sm)
+                .background(Capsule().fill(Color.smvEmerald.opacity(0.15)))
+            }
 
             Image(systemName: "checkmark.circle.fill")
                 .font(.system(size: 64))
@@ -352,6 +547,26 @@ struct ScanView: View {
 
             Spacer()
         }
+    }
+}
+
+// MARK: - AR View Container (wraps ARSCNView for SwiftUI)
+
+struct ARViewContainer: UIViewRepresentable {
+    let session: ARSession
+
+    func makeUIView(context: Context) -> ARSCNView {
+        let arView = ARSCNView()
+        arView.session = session
+        arView.automaticallyUpdatesLighting = true
+        // Show camera feed, no debug overlays
+        arView.scene = SCNScene()
+        arView.rendersContinuously = true
+        return arView
+    }
+
+    func updateUIView(_ uiView: ARSCNView, context: Context) {
+        // Session is managed externally
     }
 }
 

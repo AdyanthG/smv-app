@@ -6,18 +6,22 @@
 //
 
 import SwiftUI
+import PhotosUI
 
 struct EditProfileView: View {
 
     @Environment(\.dismiss) private var dismiss
     @Environment(AuthService.self) private var auth
     @Environment(FirestoreService.self) private var firestore
+    @Environment(StorageService.self) private var storage
     @Environment(HapticService.self) private var haptics
     @State private var displayName: String
     @State private var handle: String
     @State private var bio: String
     @State private var selectedGender: Gender
     @State private var isSaving = false
+    @State private var selectedPhotoItem: PhotosPickerItem?
+    @State private var selectedPhotoData: Data?
 
     enum Gender: String, CaseIterable {
         case male = "Male"
@@ -47,9 +51,18 @@ struct EditProfileView: View {
                             .font(SMVFont.displaySmall())
                             .foregroundStyle(Color.smvCyan)
                     }
-                    Button("Change Photo") { }
-                        .font(SMVFont.caption())
-                        .foregroundStyle(Color.smvCyan)
+                    PhotosPicker(selection: $selectedPhotoItem, matching: .images) {
+                        Text(selectedPhotoData != nil ? "Photo Selected ✓" : "Change Photo")
+                            .font(SMVFont.caption())
+                            .foregroundStyle(selectedPhotoData != nil ? Color.smvEmerald : Color.smvCyan)
+                    }
+                    .onChange(of: selectedPhotoItem) { _, newItem in
+                        Task {
+                            if let data = try? await newItem?.loadTransferable(type: Data.self) {
+                                selectedPhotoData = data
+                            }
+                        }
+                    }
                 }
                 .padding(.top, SMVSpacing.xxl)
 
@@ -176,6 +189,14 @@ struct EditProfileView: View {
         // Sync to Firestore
         if let userId = auth.currentUserId {
             Task {
+                // Upload profile photo if selected
+                if let photoData = selectedPhotoData {
+                    let _ = await storage.uploadProfilePhoto(
+                        userId: userId,
+                        imageData: photoData
+                    )
+                }
+
                 await firestore.saveUserProfile(
                     userId: userId,
                     displayName: displayName,
