@@ -232,23 +232,103 @@ final class ScanViewModel: NSObject, AVCapturePhotoCaptureDelegate {
             }
         }
 
-        if var result = await analysisService.analyze(image: image, userId: userId) {
-            // If we have multi-angle captures, extract 3D metrics and apply
-            if let captures = pendingCaptures, !captures.isEmpty {
-                let depthMetrics = faceTracker.extract3DMetrics(from: captures)
-                // Apply 3D confidence multiplier
-                let adjusted = result.overallScore * depthMetrics.confidenceMultiplier
-                result.overallScore = adjusted.smvClamped(to: 0.0...10.0)
-                // Mark as multi-angle scan
-                result.isMultiAngleScan = true
+        // ── Multi-angle analysis ──
+        // Analyze every captured angle, not just frontal.
+        // Each angle reveals different features:
+        //   Front  → symmetry, proportions, eye area
+        //   Left/Right → jawline definition, nose profile, cheekbone projection
+        //   Up/Down → forehead proportions, chin projection, under-eye area
+
+        if let captures = pendingCaptures, captures.count >= 3 {
+            // Analyze each capture
+            var angleResults: [(position: ScanPosition, result: ScanResult)] = []
+
+            for (index, capture) in captures.enumerated() {
+                // Update progress for each angle
+                await MainActor.run {
+                    let base = 0.1 + Double(index) * 0.15
+                    self.analysisProgress = min(0.85, base)
+                }
+
+                if let result = await analysisService.analyze(image: capture.image, userId: userId) {
+                    angleResults.append((position: capture.position, result: result))
+                }
             }
 
+            guard !angleResults.isEmpty else {
+                progressTask.cancel()
+                state = .error(analysisService.errorMessage ?? "Analysis failed — no face detected in any angle")
+                return
+            }
+
+            // ── Weighted score combination ──
+            // Front: 40% (primary face — symmetry, proportions)
+            // Left/Right: 20% each (profile — jawline, nose, cheekbones)
+            // Up/Down: 10% each (vertical — forehead, chin)
+            var weightedScore: Double = 0
+            var totalWeight: Double = 0
+
+            for (position, result) in angleResults {
+                let weight: Double
+                switch position {
+                case .front: weight = 0.40
+                case .left:  weight = 0.20
+                case .right: weight = 0.20
+                case .up:    weight = 0.10
+                case .down:  weight = 0.10
+                }
+                weightedScore += result.overallScore * weight
+                totalWeight += weight
+            }
+
+            // Normalize if not all angles were captured
+            let combinedScore = totalWeight > 0 ? weightedScore / totalWeight : 0
+
+            // Use the frontal result as the base (for sub-scores and categories),
+            // but replace the overall score with the multi-angle combined score
+            if var baseResult = angleResults.first(where: { $0.position == .front })?.result
+                                ?? angleResults.first?.result {
+
+                // Apply 3D depth metrics if available
+                let depthMetrics = faceTracker.extract3DMetrics(from: captures)
+                let adjusted = combinedScore * depthMetrics.confidenceMultiplier
+                baseResult.overallScore = adjusted.smvClamped(to: 0.0...10.0)
+                baseResult.isMultiAngleScan = true
+
+                progressTask.cancel()
+                withAnimation(.spring(duration: 0.3)) {
+                    analysisProgress = 1.0
+                }
+
+                // ── Cloud sync ──
+                let frontImage = captures.first(where: { $0.position == .front })?.image ?? image
+                if let firestore, let storage {
+                    Task {
+                        if let imageData = frontImage.jpegData(compressionQuality: 0.7) {
+                            let _ = await storage.uploadScanImage(
+                                userId: userId,
+                                scanId: baseResult.id,
+                                imageData: imageData
+                            )
+                        }
+                        let _ = await firestore.saveScanResult(userId: userId, result: baseResult)
+                    }
+                }
+
+                try? await Task.sleep(for: .milliseconds(500))
+                state = .complete(baseResult)
+                pendingCaptures = nil
+                return
+            }
+        }
+
+        // ── Fallback: single image analysis (no multi-angle captures) ──
+        if var result = await analysisService.analyze(image: image, userId: userId) {
             progressTask.cancel()
             withAnimation(.spring(duration: 0.3)) {
                 analysisProgress = 1.0
             }
 
-            // ── Cloud sync (fire-and-forget) ──
             if let firestore, let storage {
                 Task {
                     if let imageData = image.jpegData(compressionQuality: 0.7) {

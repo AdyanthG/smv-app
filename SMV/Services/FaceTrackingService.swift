@@ -46,8 +46,8 @@ enum ScanPosition: Int, CaseIterable {
     var targetYaw: Double {
         switch self {
         case .front: return 0
-        case .left:  return -0.26   // ~15 degrees left
-        case .right: return 0.26    // ~15 degrees right
+        case .left:  return -0.44   // ~25 degrees left — semi-side profile
+        case .right: return 0.44    // ~25 degrees right
         case .up:    return 0
         case .down:  return 0
         }
@@ -58,23 +58,23 @@ enum ScanPosition: Int, CaseIterable {
         case .front: return 0
         case .left:  return 0
         case .right: return 0
-        case .up:    return 0.21    // ~12 degrees up
-        case .down:  return -0.21   // ~12 degrees down
+        case .up:    return -0.21   // ~12 degrees up
+        case .down:  return 0.21    // ~12 degrees down
         }
     }
 
     /// Tolerance in radians
     var yawTolerance: Double {
         switch self {
-        case .front: return 0.15    // ~8.5 degrees — must be roughly straight
-        default:     return 0.17    // ~10 degrees around target
+        case .front: return 0.17    // ~10 degrees — must be roughly straight
+        default:     return 0.22    // ~12.5 degrees around target
         }
     }
 
     var pitchTolerance: Double {
         switch self {
-        case .front: return 0.15
-        default:     return 0.17
+        case .front: return 0.17
+        default:     return 0.22
         }
     }
 }
