@@ -98,9 +98,6 @@ final class FaceTrackingService: NSObject {
 
     // ── State ──
     var isSupported: Bool { ARFaceTrackingConfiguration.isSupported }
-    var currentYaw: Double = 0
-    var currentPitch: Double = 0
-    var currentRoll: Double = 0
     var isFaceDetected: Bool = false
     var isAligned: Bool = false
     var alignmentProgress: Double = 0  // 0-1, time held in position
@@ -108,12 +105,32 @@ final class FaceTrackingService: NSObject {
     var captures: [AngleCapture] = []
     var isComplete: Bool = false
 
+    // Raw angles from ARKit (world space)
+    var currentYaw: Double = 0
+    var currentPitch: Double = 0
+    var currentRoll: Double = 0
+
+    // Baseline calibration — recorded when the first face is detected.
+    // All alignment checks use (current - baseline) so it's phone-position-independent.
+    private var baselineYaw: Double?
+    private var baselinePitch: Double?
+
+    /// Relative angles (delta from baseline). These are what the UI and alignment use.
+    var relativeYaw: Double {
+        guard let base = baselineYaw else { return currentYaw }
+        return currentYaw - base
+    }
+    var relativePitch: Double {
+        guard let base = baselinePitch else { return currentPitch }
+        return currentPitch - base
+    }
+
     // ── AR Session ──
     let arSession = ARSession()
     /// Set by ARViewContainer so we can use snapshot() for captures
     weak var arView: ARSCNView?
     private var alignedSince: Date?
-    private let requiredHoldDuration: TimeInterval = 0.8 // seconds to hold position
+    private let requiredHoldDuration: TimeInterval = 0.6 // seconds to hold position
     private var displayLink: CADisplayLink?
     private var lastFaceAnchor: ARFaceAnchor?
 
@@ -132,7 +149,6 @@ final class FaceTrackingService: NSObject {
 
         let config = ARFaceTrackingConfiguration()
         config.isLightEstimationEnabled = true
-        // Capture at highest quality
         if #available(iOS 16.0, *) {
             config.videoHDRAllowed = true
         }
@@ -157,6 +173,9 @@ final class FaceTrackingService: NSObject {
         isComplete = false
         alignedSince = nil
         alignmentProgress = 0
+        // Reset baseline so it re-calibrates on next scan
+        baselineYaw = nil
+        baselinePitch = nil
     }
 
     // MARK: - Tracking Loop
@@ -169,9 +188,17 @@ final class FaceTrackingService: NSObject {
             return
         }
 
-        // Check if current head pose matches target position
-        let yawDiff = abs(currentYaw - currentPosition.targetYaw)
-        let pitchDiff = abs(currentPitch - currentPosition.targetPitch)
+        // Auto-calibrate baseline on first face detection.
+        // This captures whatever angle the user is holding the phone at
+        // as the "neutral" position, making all targets relative.
+        if baselineYaw == nil {
+            baselineYaw = currentYaw
+            baselinePitch = currentPitch
+        }
+
+        // Check if current head pose matches target position using RELATIVE angles
+        let yawDiff = abs(relativeYaw - currentPosition.targetYaw)
+        let pitchDiff = abs(relativePitch - currentPosition.targetPitch)
 
         let aligned = yawDiff < currentPosition.yawTolerance
                    && pitchDiff < currentPosition.pitchTolerance
