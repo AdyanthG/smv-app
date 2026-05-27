@@ -42,12 +42,12 @@ enum ScanPosition: Int, CaseIterable {
         }
     }
 
-    /// Target yaw/pitch in radians for this position
+    /// Target yaw/pitch in radians (relative to baseline)
     var targetYaw: Double {
         switch self {
         case .front: return 0
-        case .left:  return 0.20    // ~11 degrees left — gentle turn
-        case .right: return -0.20   // ~11 degrees right
+        case .left:  return 0.26    // ~15 degrees left
+        case .right: return -0.26   // ~15 degrees right
         case .up:    return 0
         case .down:  return 0
         }
@@ -58,24 +58,23 @@ enum ScanPosition: Int, CaseIterable {
         case .front: return 0
         case .left:  return 0
         case .right: return 0
-        case .up:    return 0.18    // ~10 degrees chin up
-        case .down:  return -0.18   // ~10 degrees chin down
+        case .up:    return -0.21   // ~12 degrees chin up (negative pitch = looking up in ARKit)
+        case .down:  return 0.21    // ~12 degrees chin down
         }
     }
 
     /// Tolerance in radians for considering the position "aligned"
-    /// Very generous — we just need roughly the right direction, not precision
     var yawTolerance: Double {
         switch self {
-        case .front: return 0.22    // ~12.5 degrees
-        default:     return 0.35    // ~20 degrees — very forgiving
+        case .front: return 0.17    // ~10 degrees — must be roughly straight
+        default:     return 0.18    // ~10 degrees around target
         }
     }
 
     var pitchTolerance: Double {
         switch self {
-        case .front: return 0.20    // ~11.5 degrees
-        default:     return 0.35    // ~20 degrees — very forgiving
+        case .front: return 0.17    // ~10 degrees
+        default:     return 0.18    // ~10 degrees around target
         }
     }
 }
@@ -100,37 +99,34 @@ final class FaceTrackingService: NSObject {
     var isSupported: Bool { ARFaceTrackingConfiguration.isSupported }
     var isFaceDetected: Bool = false
     var isAligned: Bool = false
-    var alignmentProgress: Double = 0  // 0-1, time held in position
+    var alignmentProgress: Double = 0
     var currentPosition: ScanPosition = .front
     var captures: [AngleCapture] = []
     var isComplete: Bool = false
+    var isCalibrated: Bool = false
 
-    // Raw angles from ARKit (world space)
+    // Angles for analysis (raw world-space, stored in captures)
     var currentYaw: Double = 0
     var currentPitch: Double = 0
     var currentRoll: Double = 0
 
-    // Baseline calibration — recorded when the first face is detected.
-    // All alignment checks use (current - baseline) so it's phone-position-independent.
-    private var baselineYaw: Double?
-    private var baselinePitch: Double?
+    // Relative angles (delta from baseline) — used for alignment & debug display
+    var relativeYaw: Double = 0
+    var relativePitch: Double = 0
 
-    /// Relative angles (delta from baseline). These are what the UI and alignment use.
-    var relativeYaw: Double {
-        guard let base = baselineYaw else { return currentYaw }
-        return currentYaw - base
-    }
-    var relativePitch: Double {
-        guard let base = baselinePitch else { return currentPitch }
-        return currentPitch - base
-    }
+    // ── Baseline Calibration ──
+    // Uses the nose direction vector (face’s Z-axis) instead of Euler angles.
+    // Averaged over multiple frames for stability.
+    private var baselineYaw: Double = 0
+    private var baselinePitch: Double = 0
+    private var calibrationSamples: [(yaw: Double, pitch: Double)] = []
+    private let calibrationFrameCount = 15
 
     // ── AR Session ──
     let arSession = ARSession()
-    /// Set by ARViewContainer so we can use snapshot() for captures
     weak var arView: ARSCNView?
     private var alignedSince: Date?
-    private let requiredHoldDuration: TimeInterval = 0.6 // seconds to hold position
+    private let requiredHoldDuration: TimeInterval = 0.5
     private var displayLink: CADisplayLink?
     private var lastFaceAnchor: ARFaceAnchor?
 
@@ -154,7 +150,6 @@ final class FaceTrackingService: NSObject {
         }
         arSession.run(config, options: [.resetTracking, .removeExistingAnchors])
 
-        // Start tracking loop
         displayLink = CADisplayLink(target: self, selector: #selector(trackingLoop))
         displayLink?.preferredFrameRateRange = CAFrameRateRange(minimum: 30, maximum: 60)
         displayLink?.add(to: .main, forMode: .common)
@@ -171,11 +166,14 @@ final class FaceTrackingService: NSObject {
         captures = []
         currentPosition = .front
         isComplete = false
+        isCalibrated = false
         alignedSince = nil
         alignmentProgress = 0
-        // Reset baseline so it re-calibrates on next scan
-        baselineYaw = nil
-        baselinePitch = nil
+        relativeYaw = 0
+        relativePitch = 0
+        baselineYaw = 0
+        baselinePitch = 0
+        calibrationSamples = []
     }
 
     // MARK: - Tracking Loop
@@ -188,15 +186,26 @@ final class FaceTrackingService: NSObject {
             return
         }
 
-        // Auto-calibrate baseline on first face detection.
-        // This captures whatever angle the user is holding the phone at
-        // as the "neutral" position, making all targets relative.
-        if baselineYaw == nil {
-            baselineYaw = currentYaw
-            baselinePitch = currentPitch
+        // ── Phase 1: Calibration ──
+        // Collect N frames to establish a stable baseline
+        if !isCalibrated {
+            calibrationSamples.append((yaw: currentYaw, pitch: currentPitch))
+            if calibrationSamples.count >= calibrationFrameCount {
+                // Average all samples for stability
+                let yawSum = calibrationSamples.reduce(0.0) { $0 + $1.yaw }
+                let pitchSum = calibrationSamples.reduce(0.0) { $0 + $1.pitch }
+                baselineYaw = yawSum / Double(calibrationSamples.count)
+                baselinePitch = pitchSum / Double(calibrationSamples.count)
+                isCalibrated = true
+            }
+            return
         }
 
-        // Check if current head pose matches target position using RELATIVE angles
+        // ── Phase 2: Compute relative angles ──
+        relativeYaw = currentYaw - baselineYaw
+        relativePitch = currentPitch - baselinePitch
+
+        // ── Phase 3: Check alignment against target ──
         let yawDiff = abs(relativeYaw - currentPosition.targetYaw)
         let pitchDiff = abs(relativePitch - currentPosition.targetPitch)
 
@@ -357,14 +366,20 @@ extension FaceTrackingService: ARSessionDelegate {
         isFaceDetected = true
         lastFaceAnchor = faceAnchor
 
-        // Extract Euler angles using SCNNode — the only reliable way.
-        // Manual matrix decomposition is error-prone with ARKit's coordinate system.
-        let node = SCNNode()
-        node.simdTransform = faceAnchor.transform
-        // SCNNode.eulerAngles: x=pitch, y=yaw, z=roll
-        currentPitch = Double(node.eulerAngles.x)
-        currentYaw = Double(node.eulerAngles.y)
-        currentRoll = Double(node.eulerAngles.z)
+        // ── Extract yaw/pitch from nose direction vector ──
+        // The face's Z-axis (column 2) is the nose direction in world space.
+        // This avoids Euler angle gimbal lock and wrapping issues.
+        let transform = faceAnchor.transform
+        let noseX = transform.columns.2.x
+        let noseY = transform.columns.2.y
+        let noseZ = transform.columns.2.z
+
+        // Yaw: left/right angle of nose in the XZ plane
+        currentYaw = Double(atan2(noseX, noseZ))
+        // Pitch: up/down angle of nose
+        currentPitch = Double(asin(noseY / sqrt(noseX * noseX + noseY * noseY + noseZ * noseZ)))
+        // Roll: use the face's X-axis (column 0) Y-component
+        currentRoll = Double(atan2(transform.columns.0.y, transform.columns.0.x))
     }
 
     func session(_ session: ARSession, didRemove anchors: [ARAnchor]) {

@@ -203,7 +203,7 @@ struct ScanView: View {
                             .transition(.scale.combined(with: .opacity))
                     }
 
-                    // Face detected indicator
+                    // Face detected / calibrating indicator
                     if !viewModel.faceTracker.isFaceDetected {
                         VStack(spacing: SMVSpacing.sm) {
                             Image(systemName: "face.dashed")
@@ -212,7 +212,37 @@ struct ScanView: View {
                                 .font(SMVFont.caption())
                         }
                         .foregroundStyle(Color.smvAmber)
+                    } else if !viewModel.faceTracker.isCalibrated {
+                        VStack(spacing: SMVSpacing.sm) {
+                            ProgressView()
+                                .tint(Color.smvCyan)
+                            Text("Calibrating... hold still")
+                                .font(SMVFont.caption())
+                        }
+                        .foregroundStyle(Color.smvCyan)
                     }
+
+                    // Debug overlay — real-time angle readout
+                    #if DEBUG
+                    VStack(alignment: .leading, spacing: 2) {
+                        let tracker = viewModel.faceTracker
+                        let yawDeg = String(format: "%.1f°", tracker.relativeYaw * 57.3)
+                        let pitchDeg = String(format: "%.1f°", tracker.relativePitch * 57.3)
+                        let tgtYaw = String(format: "%.1f°", tracker.currentPosition.targetYaw * 57.3)
+                        let tgtPitch = String(format: "%.1f°", tracker.currentPosition.targetPitch * 57.3)
+
+                        Text("Yaw: \(yawDeg)  → \(tgtYaw)")
+                        Text("Pitch: \(pitchDeg)  → \(tgtPitch)")
+                        Text("Cal: \(tracker.isCalibrated ? "✓" : "…")")
+                    }
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(.green)
+                    .padding(6)
+                    .background(Color.black.opacity(0.6))
+                    .cornerRadius(6)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                    .padding(.leading, 8)
+                    #endif
                 }
 
                 Spacer()
