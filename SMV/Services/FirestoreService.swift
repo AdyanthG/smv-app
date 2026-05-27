@@ -12,7 +12,7 @@ import FirebaseFirestore
 @Observable
 final class FirestoreService {
 
-    private let db = Firestore.firestore()
+    private var db: Firestore { Firestore.firestore() }
 
     var errorMessage: String?
 

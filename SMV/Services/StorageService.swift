@@ -13,7 +13,7 @@ import UIKit
 @Observable
 final class StorageService {
 
-    private let storage = Storage.storage()
+    private var storage: Storage { Storage.storage() }
 
     var errorMessage: String?
 
