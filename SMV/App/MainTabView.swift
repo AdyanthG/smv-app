@@ -49,6 +49,8 @@ struct MainTabView: View {
                             ThreadListView(categoryTitle: title, categoryEmoji: emoji)
                         case .threadDetail(let threadId):
                             ThreadDetailView(threadId: threadId)
+                        case .guideDetail(let title, let emoji, let author, let readTime):
+                            GuideDetailView(title: title, emoji: emoji, author: author, readTime: readTime)
                         }
                     }
             }

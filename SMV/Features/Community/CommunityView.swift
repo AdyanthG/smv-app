@@ -155,42 +155,55 @@ struct CommunityView: View {
     }
 
     private func guideCard(title: String, author: String, readTime: String, emoji: String, likes: Int) -> some View {
-        GlassmorphicCard(padding: SMVSpacing.lg) {
-            VStack(alignment: .leading, spacing: SMVSpacing.md) {
-                HStack {
-                    Text(emoji)
-                        .font(.system(size: 24))
-                    Spacer()
-                    HStack(spacing: 4) {
-                        Image(systemName: "heart.fill")
-                            .font(.system(size: 10))
-                            .foregroundStyle(Color.smvPink)
-                        Text("\(likes)")
+        Button {
+            router.push(.guideDetail(title: title, emoji: emoji, author: author, readTime: readTime))
+        } label: {
+            GlassmorphicCard(padding: SMVSpacing.lg) {
+                VStack(alignment: .leading, spacing: SMVSpacing.md) {
+                    HStack {
+                        Text(emoji)
+                            .font(.system(size: 24))
+                        Spacer()
+                        HStack(spacing: 4) {
+                            Image(systemName: "heart.fill")
+                                .font(.system(size: 10))
+                                .foregroundStyle(Color.smvPink)
+                            Text("\(likes)")
+                                .font(SMVFont.micro())
+                                .foregroundStyle(Color.smvTextSecondary)
+                        }
+                    }
+
+                    Text(title)
+                        .font(SMVFont.title())
+                        .foregroundStyle(.white)
+                        .multilineTextAlignment(.leading)
+
+                    HStack(spacing: SMVSpacing.md) {
+                        Text(author)
                             .font(SMVFont.micro())
-                            .foregroundStyle(Color.smvTextSecondary)
-                    }
-                }
-
-                Text(title)
-                    .font(SMVFont.title())
-                    .foregroundStyle(.white)
-
-                HStack(spacing: SMVSpacing.md) {
-                    Text(author)
+                            .foregroundStyle(Color.smvCyan)
+                        Text("•")
+                            .foregroundStyle(Color.smvTextTertiary)
+                        HStack(spacing: 4) {
+                            Image(systemName: "clock")
+                                .font(.system(size: 10))
+                            Text(readTime)
+                        }
                         .font(SMVFont.micro())
-                        .foregroundStyle(Color.smvCyan)
-                    Text("•")
                         .foregroundStyle(Color.smvTextTertiary)
-                    HStack(spacing: 4) {
-                        Image(systemName: "clock")
-                            .font(.system(size: 10))
-                        Text(readTime)
                     }
-                    .font(SMVFont.micro())
-                    .foregroundStyle(Color.smvTextTertiary)
+
+                    HStack {
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(Color.smvTextTertiary)
+                    }
                 }
             }
         }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Trending
@@ -240,51 +253,58 @@ struct CommunityView: View {
     }
 
     private func trendingThread(title: String, author: String, replies: Int, views: Int, tag: String) -> some View {
-        GlassmorphicCard(padding: SMVSpacing.md) {
-            VStack(alignment: .leading, spacing: SMVSpacing.sm) {
-                // Tag
-                Text(tag.uppercased())
-                    .font(SMVFont.micro())
-                    .foregroundStyle(Color.smvCyan)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 2)
-                    .background(
-                        Capsule().fill(Color.smvCyan.opacity(0.15))
-                    )
+        Button {
+            // Navigate to the matching forum category
+            router.push(.forumCategory(title: tag, emoji: "🔥"))
+        } label: {
+            GlassmorphicCard(padding: SMVSpacing.md) {
+                VStack(alignment: .leading, spacing: SMVSpacing.sm) {
+                    // Tag
+                    Text(tag.uppercased())
+                        .font(SMVFont.micro())
+                        .foregroundStyle(Color.smvCyan)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 2)
+                        .background(
+                            Capsule().fill(Color.smvCyan.opacity(0.15))
+                        )
 
-                Text(title)
-                    .font(SMVFont.title())
-                    .foregroundStyle(.white)
-                    .lineLimit(2)
+                    Text(title)
+                        .font(SMVFont.title())
+                        .foregroundStyle(.white)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
 
-                HStack(spacing: SMVSpacing.lg) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "person.fill")
-                            .font(.system(size: 10))
-                        Text(author)
-                    }
-                    .font(SMVFont.micro())
-                    .foregroundStyle(Color.smvTextSecondary)
-
-                    Spacer()
-
-                    HStack(spacing: SMVSpacing.md) {
+                    HStack(spacing: SMVSpacing.lg) {
                         HStack(spacing: 4) {
-                            Image(systemName: "bubble.fill")
+                            Image(systemName: "person.fill")
                                 .font(.system(size: 10))
-                            Text("\(replies)")
+                            Text(author)
                         }
-                        HStack(spacing: 4) {
-                            Image(systemName: "eye.fill")
-                                .font(.system(size: 10))
-                            Text(views > 1000 ? "\(views / 1000)K" : "\(views)")
+                        .font(SMVFont.micro())
+                        .foregroundStyle(Color.smvTextSecondary)
+
+                        Spacer()
+
+                        HStack(spacing: SMVSpacing.md) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "bubble.fill")
+                                    .font(.system(size: 10))
+                                Text("\(replies)")
+                            }
+                            HStack(spacing: 4) {
+                                Image(systemName: "eye.fill")
+                                    .font(.system(size: 10))
+                                Text(views > 1000 ? "\(views / 1000)K" : "\(views)")
+                            }
                         }
+                        .font(SMVFont.micro())
+                        .foregroundStyle(Color.smvTextTertiary)
                     }
-                    .font(SMVFont.micro())
-                    .foregroundStyle(Color.smvTextTertiary)
                 }
             }
         }
+        .buttonStyle(.plain)
     }
 }
 

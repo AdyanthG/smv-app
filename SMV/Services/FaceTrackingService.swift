@@ -42,7 +42,7 @@ enum ScanPosition: Int, CaseIterable {
         }
     }
 
-    /// Target yaw/pitch in radians (relative to baseline)
+    /// Target yaw/pitch in radians (camera-relative, no baseline needed)
     var targetYaw: Double {
         switch self {
         case .front: return 0
@@ -58,23 +58,23 @@ enum ScanPosition: Int, CaseIterable {
         case .front: return 0
         case .left:  return 0
         case .right: return 0
-        case .up:    return -0.21   // ~12 degrees chin up (negative pitch = looking up in ARKit)
-        case .down:  return 0.21    // ~12 degrees chin down
+        case .up:    return -0.21   // ~12 degrees up (negative pitch in ARKit)
+        case .down:  return 0.21    // ~12 degrees down
         }
     }
 
-    /// Tolerance in radians for considering the position "aligned"
+    /// Tolerance in radians
     var yawTolerance: Double {
         switch self {
-        case .front: return 0.17    // ~10 degrees — must be roughly straight
-        default:     return 0.18    // ~10 degrees around target
+        case .front: return 0.15    // ~8.5 degrees — must be roughly straight
+        default:     return 0.17    // ~10 degrees around target
         }
     }
 
     var pitchTolerance: Double {
         switch self {
-        case .front: return 0.17    // ~10 degrees
-        default:     return 0.18    // ~10 degrees around target
+        case .front: return 0.15
+        default:     return 0.17
         }
     }
 }
@@ -103,24 +103,17 @@ final class FaceTrackingService: NSObject {
     var currentPosition: ScanPosition = .front
     var captures: [AngleCapture] = []
     var isComplete: Bool = false
-    var isCalibrated: Bool = false
+    var isCalibrated: Bool = true  // No calibration needed with camera-relative approach
 
-    // Angles for analysis (raw world-space, stored in captures)
+    // Camera-relative Euler angles (pitch=x, yaw=y, roll=z)
+    // These are ALWAYS relative to the phone, not world space.
     var currentYaw: Double = 0
     var currentPitch: Double = 0
     var currentRoll: Double = 0
 
-    // Relative angles (delta from baseline) — used for alignment & debug display
+    // For debug display (same as current angles since they're already relative)
     var relativeYaw: Double = 0
     var relativePitch: Double = 0
-
-    // ── Baseline Calibration ──
-    // Uses the nose direction vector (face’s Z-axis) instead of Euler angles.
-    // Averaged over multiple frames for stability.
-    private var baselineYaw: Double = 0
-    private var baselinePitch: Double = 0
-    private var calibrationSamples: [(yaw: Double, pitch: Double)] = []
-    private let calibrationFrameCount = 15
 
     // ── AR Session ──
     let arSession = ARSession()
@@ -166,14 +159,10 @@ final class FaceTrackingService: NSObject {
         captures = []
         currentPosition = .front
         isComplete = false
-        isCalibrated = false
         alignedSince = nil
         alignmentProgress = 0
         relativeYaw = 0
         relativePitch = 0
-        baselineYaw = 0
-        baselinePitch = 0
-        calibrationSamples = []
     }
 
     // MARK: - Tracking Loop
@@ -186,26 +175,12 @@ final class FaceTrackingService: NSObject {
             return
         }
 
-        // ── Phase 1: Calibration ──
-        // Collect N frames to establish a stable baseline
-        if !isCalibrated {
-            calibrationSamples.append((yaw: currentYaw, pitch: currentPitch))
-            if calibrationSamples.count >= calibrationFrameCount {
-                // Average all samples for stability
-                let yawSum = calibrationSamples.reduce(0.0) { $0 + $1.yaw }
-                let pitchSum = calibrationSamples.reduce(0.0) { $0 + $1.pitch }
-                baselineYaw = yawSum / Double(calibrationSamples.count)
-                baselinePitch = pitchSum / Double(calibrationSamples.count)
-                isCalibrated = true
-            }
-            return
-        }
+        // Angles are already camera-relative (computed in didUpdate)
+        // So they represent head pose relative to the phone directly.
+        relativeYaw = currentYaw
+        relativePitch = currentPitch
 
-        // ── Phase 2: Compute relative angles ──
-        relativeYaw = currentYaw - baselineYaw
-        relativePitch = currentPitch - baselinePitch
-
-        // ── Phase 3: Check alignment against target ──
+        // Check alignment against target
         let yawDiff = abs(relativeYaw - currentPosition.targetYaw)
         let pitchDiff = abs(relativePitch - currentPosition.targetPitch)
 
@@ -366,20 +341,23 @@ extension FaceTrackingService: ARSessionDelegate {
         isFaceDetected = true
         lastFaceAnchor = faceAnchor
 
-        // ── Extract yaw/pitch from nose direction vector ──
-        // The face's Z-axis (column 2) is the nose direction in world space.
-        // This avoids Euler angle gimbal lock and wrapping issues.
-        let transform = faceAnchor.transform
-        let noseX = transform.columns.2.x
-        let noseY = transform.columns.2.y
-        let noseZ = transform.columns.2.z
+        // ── CAMERA-RELATIVE transform ──
+        // The face anchor transform is in WORLD space (relative to session start).
+        // We need it relative to the CAMERA so angles stay correct regardless
+        // of how the phone is held.
+        // Formula: faceInCamera = inverse(camera.transform) * face.transform
+        guard let frame = session.currentFrame else { return }
+        let cameraTransform = frame.camera.transform
+        let faceInCameraSpace = simd_mul(simd_inverse(cameraTransform), faceAnchor.transform)
 
-        // Yaw: left/right angle of nose in the XZ plane
-        currentYaw = Double(atan2(noseX, noseZ))
-        // Pitch: up/down angle of nose
-        currentPitch = Double(asin(noseY / sqrt(noseX * noseX + noseY * noseY + noseZ * noseZ)))
-        // Roll: use the face's X-axis (column 0) Y-component
-        currentRoll = Double(atan2(transform.columns.0.y, transform.columns.0.x))
+        // Extract Euler angles from the camera-relative transform using SCNNode
+        let node = SCNNode()
+        node.simdTransform = faceInCameraSpace
+        // In camera space: x=pitch (nod), y=yaw (turn), z=roll (tilt)
+        // Looking straight at camera = (0, 0, 0)
+        currentPitch = Double(node.eulerAngles.x)
+        currentYaw = Double(node.eulerAngles.y)
+        currentRoll = Double(node.eulerAngles.z)
     }
 
     func session(_ session: ARSession, didRemove anchors: [ARAnchor]) {

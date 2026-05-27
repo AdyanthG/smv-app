@@ -66,6 +66,7 @@ final class Router {
         case termsOfService
         case forumCategory(title: String, emoji: String)
         case threadDetail(threadId: String)
+        case guideDetail(title: String, emoji: String, author: String, readTime: String)
     }
 
     // ── Modal Sheets ──

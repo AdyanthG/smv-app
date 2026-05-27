@@ -203,7 +203,7 @@ struct ScanView: View {
                             .transition(.scale.combined(with: .opacity))
                     }
 
-                    // Face detected / calibrating indicator
+                    // Face detected indicator
                     if !viewModel.faceTracker.isFaceDetected {
                         VStack(spacing: SMVSpacing.sm) {
                             Image(systemName: "face.dashed")
@@ -212,14 +212,6 @@ struct ScanView: View {
                                 .font(SMVFont.caption())
                         }
                         .foregroundStyle(Color.smvAmber)
-                    } else if !viewModel.faceTracker.isCalibrated {
-                        VStack(spacing: SMVSpacing.sm) {
-                            ProgressView()
-                                .tint(Color.smvCyan)
-                            Text("Calibrating... hold still")
-                                .font(SMVFont.caption())
-                        }
-                        .foregroundStyle(Color.smvCyan)
                     }
 
                     // Debug overlay — real-time angle readout
@@ -230,10 +222,12 @@ struct ScanView: View {
                         let pitchDeg = String(format: "%.1f°", tracker.relativePitch * 57.3)
                         let tgtYaw = String(format: "%.1f°", tracker.currentPosition.targetYaw * 57.3)
                         let tgtPitch = String(format: "%.1f°", tracker.currentPosition.targetPitch * 57.3)
+                        let tolY = String(format: "%.1f°", tracker.currentPosition.yawTolerance * 57.3)
+                        let tolP = String(format: "%.1f°", tracker.currentPosition.pitchTolerance * 57.3)
 
-                        Text("Yaw: \(yawDeg)  → \(tgtYaw)")
-                        Text("Pitch: \(pitchDeg)  → \(tgtPitch)")
-                        Text("Cal: \(tracker.isCalibrated ? "✓" : "…")")
+                        Text("Yaw: \(yawDeg) tgt:\(tgtYaw) ±\(tolY)")
+                        Text("Pit: \(pitchDeg) tgt:\(tgtPitch) ±\(tolP)")
+                        Text(tracker.isAligned ? "✓ ALIGNED" : "○ seeking…")
                     }
                     .font(.system(size: 11, weight: .medium, design: .monospaced))
                     .foregroundStyle(.green)
