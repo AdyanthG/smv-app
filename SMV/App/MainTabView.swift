@@ -106,21 +106,24 @@ private struct CustomTabBar: View {
     private let tabs: [Router.Tab] = Router.Tab.allCases
 
     var body: some View {
-        HStack(spacing: 0) {
-            ForEach(tabs) { tab in
-                if tab == .scan {
-                    ScanTabButton()
-                } else {
-                    TabBarButton(tab: tab)
+        VStack(spacing: 0) {
+            HStack(spacing: 0) {
+                ForEach(tabs) { tab in
+                    if tab == .scan {
+                        ScanTabButton()
+                    } else {
+                        TabBarButton(tab: tab)
+                    }
                 }
             }
+            .padding(.horizontal, SMVSpacing.sm)
+            .padding(.top, SMVSpacing.md)
+            .padding(.bottom, SMVSpacing.sm)
         }
-        .padding(.horizontal, SMVSpacing.sm)
-        .padding(.top, SMVSpacing.md)
-        .padding(.bottom, SMVSpacing.sm)
         .background(
             Rectangle()
                 .fill(Color.smvSurface0.opacity(0.95))
+                .ignoresSafeArea(.container, edges: .bottom)
                 .overlay(alignment: .top) {
                     Rectangle()
                         .fill(Color.white.opacity(0.06))
