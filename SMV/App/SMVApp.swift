@@ -70,6 +70,7 @@ struct SMVApp: App {
                 .environment(storage)
                 .preferredColorScheme(.dark)
                 .task {
+                    auth.start()
                     await subscriptions.updateSubscriptionStatus()
                 }
                 .onAppear {

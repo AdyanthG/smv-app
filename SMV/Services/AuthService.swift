@@ -49,6 +49,13 @@ final class AuthService {
     // MARK: - Init
 
     init() {
+        // Don't access Auth.auth() here — FirebaseApp may not be configured yet.
+        // Call start() after FirebaseApp.configure() has run.
+    }
+
+    /// Call this after FirebaseApp.configure() to begin listening for auth state.
+    func start() {
+        guard authStateListener == nil else { return }
         listenToAuthState()
     }
 
