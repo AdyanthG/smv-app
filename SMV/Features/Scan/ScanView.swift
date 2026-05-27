@@ -11,8 +11,9 @@ import SwiftData
 struct ScanView: View {
 
     @State private var viewModel = ScanViewModel()
-    @State private var screenFlashEnabled = false
-    @State private var showFlashOverlay = false
+    @State private var ringLightEnabled = false
+    @State private var captureFlash = false
+    @State private var savedBrightness: CGFloat = 0.5
     @Environment(Router.self) private var router
     @Environment(HapticService.self) private var haptics
     @Environment(AuthService.self) private var auth
@@ -39,11 +40,12 @@ struct ScanView: View {
                 errorView(message)
             }
 
-            // Screen flash overlay (Snapchat-style front flash)
-            if showFlashOverlay {
+            // Brief full-screen white flash on capture
+            if captureFlash {
                 Color.white
                     .ignoresSafeArea()
                     .transition(.opacity)
+                    .allowsHitTesting(false)
             }
         }
     }
@@ -119,13 +121,35 @@ struct ScanView: View {
             CameraPreviewView(session: viewModel.captureSession)
                 .ignoresSafeArea()
 
-            // Face guide overlay
+            // ── Persistent Ring Light ──
+            // Bright white border around the entire screen edge,
+            // acts as a soft light source for the front camera.
+            if ringLightEnabled {
+                Rectangle()
+                    .fill(.clear)
+                    .ignoresSafeArea()
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 0)
+                            .stroke(Color.white.opacity(0.95), lineWidth: 60)
+                            .blur(radius: 20)
+                            .ignoresSafeArea()
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 0)
+                            .stroke(Color.white, lineWidth: 30)
+                            .ignoresSafeArea()
+                    )
+                    .allowsHitTesting(false)
+            }
+
+            // Controls
             VStack {
                 Spacer()
 
                 HStack(spacing: SMVSpacing.xxl) {
                     // Close
                     Button {
+                        disableRingLight()
                         viewModel.stopCamera()
                         viewModel.reset()
                     } label: {
@@ -155,24 +179,23 @@ struct ScanView: View {
 
                     Spacer()
 
-                    // Screen flash toggle (replaces upload)
+                    // Ring light toggle
                     Button {
-                        screenFlashEnabled.toggle()
-                        haptics.lightImpact()
+                        toggleRingLight()
                     } label: {
-                        Image(systemName: screenFlashEnabled ? "sun.max.fill" : "sun.max")
+                        Image(systemName: ringLightEnabled ? "sun.max.fill" : "sun.max")
                             .font(.system(size: 18, weight: .bold))
-                            .foregroundStyle(screenFlashEnabled ? Color.smvAmber : .white)
+                            .foregroundStyle(ringLightEnabled ? Color.smvAmber : .white)
                             .frame(width: 48, height: 48)
                             .background(
                                 Circle()
-                                    .fill(screenFlashEnabled
-                                        ? Color.smvAmber.opacity(0.2)
+                                    .fill(ringLightEnabled
+                                        ? Color.smvAmber.opacity(0.25)
                                         : Color.clear.opacity(0.001)
                                     )
                                     .overlay(
                                         Circle().fill(.ultraThinMaterial)
-                                            .opacity(screenFlashEnabled ? 0 : 1)
+                                            .opacity(ringLightEnabled ? 0 : 1)
                                     )
                             )
                     }
@@ -183,25 +206,46 @@ struct ScanView: View {
         }
     }
 
-    // MARK: - Screen Flash + Capture
+    // MARK: - Ring Light Controls
+
+    private func toggleRingLight() {
+        haptics.lightImpact()
+        if ringLightEnabled {
+            disableRingLight()
+        } else {
+            enableRingLight()
+        }
+    }
+
+    private func enableRingLight() {
+        savedBrightness = UIScreen.main.brightness
+        UIScreen.main.brightness = 1.0
+        withAnimation(.easeIn(duration: 0.2)) {
+            ringLightEnabled = true
+        }
+    }
+
+    private func disableRingLight() {
+        UIScreen.main.brightness = savedBrightness
+        withAnimation(.easeOut(duration: 0.2)) {
+            ringLightEnabled = false
+        }
+    }
+
+    // MARK: - Capture
 
     private func triggerCapture() {
-        if screenFlashEnabled {
-            // Flash the screen white briefly (Snapchat front-flash effect)
-            let originalBrightness = UIScreen.main.brightness
-            UIScreen.main.brightness = 1.0
+        if ringLightEnabled {
+            // Brief full-screen flash for the actual capture moment
             withAnimation(.easeIn(duration: 0.05)) {
-                showFlashOverlay = true
+                captureFlash = true
             }
-
-            // Capture after brief flash
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
                 viewModel.takePhoto()
-
-                withAnimation(.easeOut(duration: 0.3)) {
-                    showFlashOverlay = false
+                withAnimation(.easeOut(duration: 0.25)) {
+                    captureFlash = false
                 }
-                UIScreen.main.brightness = originalBrightness
+                disableRingLight()
             }
         } else {
             viewModel.takePhoto()
