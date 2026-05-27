@@ -58,8 +58,8 @@ enum ScanPosition: Int, CaseIterable {
         case .front: return 0
         case .left:  return 0
         case .right: return 0
-        case .up:    return -0.30  // ~17 degrees up
-        case .down:  return 0.30   // ~17 degrees down
+        case .up:    return 0.30   // chin up
+        case .down:  return -0.30  // chin down
         }
     }
 
