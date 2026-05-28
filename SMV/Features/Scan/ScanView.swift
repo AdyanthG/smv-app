@@ -385,27 +385,24 @@ struct ScanView: View {
     // MARK: - Ring Light Overlay
 
     private var ringLightOverlay: some View {
-        // Full-screen white flash (Snapchat-style)
-        // Uses a bright white fill covering the entire screen
-        // with a soft radial gradient cutout so the face is still visible
+        // Snapchat-style ring light: thick bright white border around the screen
         ZStack {
-            // Primary white fill — max brightness
-            Color.white
+            // Outer soft glow — wide, blurred for gentle fill
+            RoundedRectangle(cornerRadius: 0)
+                .stroke(Color.white, lineWidth: 120)
+                .blur(radius: 30)
                 .ignoresSafeArea()
 
-            // Subtle radial gradient so the face area isn't blown out
-            // but the surrounding screen is pure white
-            RadialGradient(
-                colors: [
-                    Color.white.opacity(0.6),
-                    Color.white.opacity(0.85),
-                    Color.white
-                ],
-                center: .center,
-                startRadius: 80,
-                endRadius: 250
-            )
-            .ignoresSafeArea()
+            // Middle layer — bright, less blurred
+            RoundedRectangle(cornerRadius: 0)
+                .stroke(Color.white, lineWidth: 80)
+                .blur(radius: 10)
+                .ignoresSafeArea()
+
+            // Inner sharp edge — crisp bright ring
+            RoundedRectangle(cornerRadius: 0)
+                .stroke(Color.white, lineWidth: 50)
+                .ignoresSafeArea()
         }
         .allowsHitTesting(false)
     }

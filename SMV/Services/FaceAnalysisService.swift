@@ -285,36 +285,26 @@ final class FaceAnalysisService {
         let failoPenalty: Double
         switch failos.count {
         case 0:    failoPenalty = 1.0
-        case 1:    failoPenalty = 0.92
-        case 2:    failoPenalty = 0.85
-        default:   failoPenalty = 0.78
+        case 1:    failoPenalty = 0.95
+        case 2:    failoPenalty = 0.90
+        default:   failoPenalty = 0.85
         }
 
         // ── Step 5: Weighted composite ──
-        let rawComposite: Double
-        if isAngled {
-            // For side/up/down captures, only jaw and skin clarity are meaningful.
-            // Symmetry, FWHR, proportions are all geometrically distorted in 2D
-            // when the face is at an angle, so they'd produce artificially low scores.
-            rawComposite = jawScore * 0.55 + skinClarityScore * 0.25 + eyeAreaScore * 0.20
-        } else {
-            rawComposite =
-                eyeAreaScore * Weights.eyeArea +
-                jawScore * Weights.jaw +
-                symmetryRating * Weights.symmetry +
-                harmonyScore * Weights.harmony +
-                proportionsScore * Weights.proportions +
-                skinClarityScore * Weights.skinClarity
-        }
+        // Use ALL metrics for all angles — this is the whole point of multi-angle scanning
+        let rawComposite =
+            eyeAreaScore * Weights.eyeArea +
+            jawScore * Weights.jaw +
+            symmetryRating * Weights.symmetry +
+            harmonyScore * Weights.harmony +
+            proportionsScore * Weights.proportions +
+            skinClarityScore * Weights.skinClarity
 
         // ── Step 6: Apply bell curve + penalties ──
         let bellCurved = applyBellCurve(rawScore: rawComposite)
         let qualityAdjusted = bellCurved * quality.qualityMultiplier
         let distortionAdjusted = qualityAdjusted * distortionPenalty
-        // Skip failoPenalty for angled captures (failo detection uses frontal-only metrics)
-        let finalScore = isAngled
-            ? distortionAdjusted.smvClamped(to: 0.0...10.0)
-            : (distortionAdjusted * failoPenalty).smvClamped(to: 0.0...10.0)
+        let finalScore = (distortionAdjusted * failoPenalty).smvClamped(to: 0.0...10.0)
 
         return FaceMetrics(
             quality: quality,
@@ -764,7 +754,10 @@ final class FaceAnalysisService {
         }
 
         let avgDeviation = totalDeviation / Double(pairCount)
-        return max(0, 1.0 - avgDeviation * 5.0)
+        // Reduced multiplier: 3.0 instead of 5.0
+        // Even well-symmetric faces have 0.05-0.10 deviation from 2D landmark noise.
+        // 5.0× was making slightly asymmetric faces (0.17 dev) score near 0.
+        return max(0, 1.0 - avgDeviation * 3.0)
     }
 
     /// Skin clarity: rough estimate from image variance in face region
@@ -812,15 +805,19 @@ final class FaceAnalysisService {
 
         // Too-low CV can indicate flat/washed-out image (ring light blowout, puffed cheeks)
         // Natural skin has SOME texture variation. Penalize both extremes.
+        // Skin clarity scoring:
+        // Low CV (uniform brightness) → smooth skin → high score
+        // High CV (lots of variation) can mean texture/acne OR just dim/mixed lighting
+        // Don't punish high CV too harshly — dim lighting naturally increases CV
         if cv < 0.03 {
             // Suspiciously uniform — likely blown out or distorted
             return 6.0
         }
         if cv < 0.06 { return 8.0 + (0.06 - cv) / 0.03 * 1.5 }
-        if cv < 0.10 { return 7.0 + (0.10 - cv) / 0.04 * 1.0 }
-        if cv < 0.18 { return 5.0 + (0.18 - cv) / 0.08 * 2.0 }
-        if cv < 0.30 { return 3.0 + (0.30 - cv) / 0.12 * 2.0 }
-        return max(1.5, 3.0 - (cv - 0.30) * 10)
+        if cv < 0.12 { return 6.5 + (0.12 - cv) / 0.06 * 1.5 }
+        if cv < 0.22 { return 5.0 + (0.22 - cv) / 0.10 * 1.5 }
+        if cv < 0.35 { return 4.0 + (0.35 - cv) / 0.13 * 1.0 }
+        return max(3.0, 4.0 - (cv - 0.35) * 5)
     }
 
     // MARK: - Scoring Functions
@@ -971,12 +968,12 @@ final class FaceAnalysisService {
     /// Uses steeper sigmoid so scores differentiate more clearly.
     /// Most people land 4-6. Attractive 6.5-8. Elite 8-9.5.
     private func applyBellCurve(rawScore: Double) -> Double {
-        // Steeper sigmoid for better differentiation
-        let k = 0.55 // steeper than before (was 0.45)
-        let midpoint = 5.5
+        // Slightly less aggressive sigmoid for better differentiation
+        let k = 0.50
+        let midpoint = 5.0
         let sigmoid = 1.0 / (1.0 + exp(-k * (rawScore - midpoint)))
-        // Map sigmoid (0-1) to score (0.5-10) with slight floor
-        return 0.5 + sigmoid * 9.5
+        // Map sigmoid (0-1) to score (1.0-10) with higher floor
+        return 1.0 + sigmoid * 9.0
     }
 
     // MARK: - Geometry Helpers

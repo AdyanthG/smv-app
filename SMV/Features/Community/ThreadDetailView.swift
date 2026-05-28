@@ -21,6 +21,7 @@ struct ThreadDetailView: View {
     @Query private var allReplies: [ForumReply]
     @State private var replyText = ""
     @State private var isLiked = false
+    @FocusState private var isReplyFocused: Bool
 
     private var thread: ForumThread? {
         allThreads.first { $0.id == threadId }
@@ -162,12 +163,16 @@ struct ThreadDetailView: View {
                     .foregroundStyle(isLiked ? Color.smvPink : Color.smvTextTertiary)
                 }
 
-                HStack(spacing: 4) {
-                    Image(systemName: "bubble.right")
-                    Text("\(thread.replyCount)")
-                        .font(SMVFont.caption())
+                Button {
+                    isReplyFocused = true
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "bubble.right")
+                        Text("\(thread.replyCount)")
+                            .font(SMVFont.caption())
+                    }
+                    .foregroundStyle(Color.smvTextTertiary)
                 }
-                .foregroundStyle(Color.smvTextTertiary)
 
                 HStack(spacing: 4) {
                     Image(systemName: "eye")
@@ -209,18 +214,34 @@ struct ThreadDetailView: View {
                     .foregroundStyle(Color.smvTextSecondary)
                     .lineSpacing(3)
 
-                Button {
-                    reply.isLiked.toggle()
-                    reply.likeCount += reply.isLiked ? 1 : -1
-                    haptics.lightImpact()
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: reply.isLiked ? "heart.fill" : "heart")
-                            .font(.system(size: 12))
-                        Text("\(reply.likeCount)")
-                            .font(SMVFont.micro())
+                HStack(spacing: SMVSpacing.lg) {
+                    Button {
+                        reply.isLiked.toggle()
+                        reply.likeCount += reply.isLiked ? 1 : -1
+                        haptics.lightImpact()
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: reply.isLiked ? "heart.fill" : "heart")
+                                .font(.system(size: 12))
+                            Text("\(reply.likeCount)")
+                                .font(SMVFont.micro())
+                        }
+                        .foregroundStyle(reply.isLiked ? Color.smvPink : Color.smvTextTertiary)
                     }
-                    .foregroundStyle(reply.isLiked ? Color.smvPink : Color.smvTextTertiary)
+
+                    Button {
+                        replyText = "@\(reply.authorName) "
+                        isReplyFocused = true
+                        haptics.lightImpact()
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "arrowshape.turn.up.left")
+                                .font(.system(size: 11))
+                            Text("Reply")
+                                .font(SMVFont.micro())
+                        }
+                        .foregroundStyle(Color.smvTextTertiary)
+                    }
                 }
                 .padding(.top, 2)
             }
@@ -235,6 +256,7 @@ struct ThreadDetailView: View {
             TextField("Reply...", text: $replyText)
                 .font(SMVFont.body())
                 .foregroundStyle(.white)
+                .focused($isReplyFocused)
                 .padding(SMVSpacing.md)
                 .background(
                     RoundedRectangle(cornerRadius: SMVRadius.md)
