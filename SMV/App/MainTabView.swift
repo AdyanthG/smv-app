@@ -56,8 +56,10 @@ struct MainTabView: View {
             }
             .tint(Color.smvCyan)
 
-            // ── Tab Bar ──
-            CustomTabBar()
+            // ── Tab Bar (hidden when in detail views) ──
+            if router.navigationPath.isEmpty {
+                CustomTabBar()
+            }
         }
         .background(Color.smvBackground)
         .sheet(item: $router.presentedSheet) { sheet in

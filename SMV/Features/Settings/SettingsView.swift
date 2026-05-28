@@ -150,6 +150,7 @@ struct SettingsView: View {
             }
             .listRowBackground(Color.smvSurface1)
         }
+        .contentMargins(.bottom, 40)
         .scrollContentBackground(.hidden)
         .background(Color.smvBackground)
         .navigationTitle("Settings")

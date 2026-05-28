@@ -111,6 +111,15 @@ struct SMVApp: App {
                     await subscriptions.updateSubscriptionStatus()
                     // Request push permission
                     await notifications.requestPermission()
+
+                    // Auto sign-in anonymously if not signed in
+                    // This ensures scans are saved to Firestore for leaderboard
+                    if auth.currentUserId == nil {
+                        auth.signInAsGuest()
+                        // Wait briefly for sign-in to complete
+                        try? await Task.sleep(for: .milliseconds(500))
+                    }
+
                     // Register FCM token
                     if let userId = auth.currentUserId {
                         await notifications.registerToken(userId: userId, firestore: firestore)
