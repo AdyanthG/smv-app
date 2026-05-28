@@ -445,7 +445,6 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				CODE_SIGN_ENTITLEMENTS = SMV/SMV.entitlements;
 				PRODUCT_BUNDLE_IDENTIFIER = com.adyanth.SMV;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -479,7 +478,6 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				CODE_SIGN_ENTITLEMENTS = SMV/SMV.entitlements;
 				PRODUCT_BUNDLE_IDENTIFIER = com.adyanth.SMV;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;

@@ -218,20 +218,45 @@ final class AuthService {
         isLoading = false
     }
 
-    // MARK: - Guest Sign In (Anonymous)
+    // MARK: - Anonymous Sign In (with display name)
 
+    func signInAnonymouslyWithName(_ name: String) async {
+        isLoading = true
+        errorMessage = nil
+
+        do {
+            let result = try await Auth.auth().signInAnonymously()
+            let userId = result.user.uid
+
+            // Set display name on Firebase Auth profile
+            let changeRequest = result.user.createProfileChangeRequest()
+            changeRequest.displayName = name
+            try? await changeRequest.commitChanges()
+
+            // Update local state
+            displayName = name
+            defaults.set(name, forKey: "smv_displayName")
+
+            // Sync profile to Firestore
+            let db = Firestore.firestore()
+            try? await db.collection("users").document(userId).setData([
+                "displayName": name,
+                "createdAt": FieldValue.serverTimestamp(),
+                "updatedAt": FieldValue.serverTimestamp(),
+            ], merge: true)
+
+            state = .signedIn(userId: userId)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+
+        isLoading = false
+    }
+
+    /// Legacy guest sign-in (kept for backward compatibility)
     func signInAsGuest() {
         Task {
-            isLoading = true
-            do {
-                let result = try await Auth.auth().signInAnonymously()
-                displayName = "Guest"
-                defaults.set("Guest", forKey: "smv_displayName")
-                state = .signedIn(userId: result.user.uid)
-            } catch {
-                errorMessage = error.localizedDescription
-            }
-            isLoading = false
+            await signInAnonymouslyWithName("Guest")
         }
     }
 

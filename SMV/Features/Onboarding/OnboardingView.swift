@@ -6,11 +6,11 @@
 //
 
 import SwiftUI
-import AuthenticationServices
 
 struct OnboardingView: View {
 
     @State private var currentPage = 0
+    @State private var nameInput = ""
     @Environment(AuthService.self) private var auth
     @Environment(Router.self) private var router
     @Environment(HapticService.self) private var haptics
@@ -80,27 +80,45 @@ struct OnboardingView: View {
                     // CTA
                     if currentPage == pages.count - 1 {
                         VStack(spacing: SMVSpacing.md) {
-                            // Primary: Sign in with Apple (required)
+                            // Name entry
+                            TextField("Your name", text: $nameInput)
+                                .font(SMVFont.body())
+                                .foregroundStyle(.white)
+                                .padding()
+                                .background(
+                                    RoundedRectangle(cornerRadius: 12)
+                                        .fill(Color.smvSurface1)
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 12)
+                                                .stroke(Color.smvSurface2, lineWidth: 1)
+                                        )
+                                )
+                                .textInputAutocapitalization(.words)
+                                .autocorrectionDisabled()
+
+                            // Get Started button
                             if auth.isLoading {
                                 ProgressView()
                                     .tint(.white)
                                     .frame(height: 50)
                             } else {
-                                SignInWithAppleButton(.signIn) { request in
-                                    request.requestedScopes = [.fullName, .email]
-                                    request.nonce = auth.prepareNonce()
-                                } onCompletion: { result in
+                                GradientButton(
+                                    title: nameInput.trimmingCharacters(in: .whitespaces).isEmpty
+                                        ? "Enter your name" : "Get Started",
+                                    icon: "arrow.right"
+                                ) {
+                                    let trimmed = nameInput.trimmingCharacters(in: .whitespaces)
+                                    guard !trimmed.isEmpty else { return }
+                                    haptics.success()
                                     Task {
-                                        await auth.handleAppleSignIn(result: result)
+                                        await auth.signInAnonymouslyWithName(trimmed)
                                         if auth.currentUserId != nil {
                                             auth.completeOnboarding()
                                             router.dismiss()
                                         }
                                     }
                                 }
-                                .signInWithAppleButtonStyle(.white)
-                                .frame(height: 50)
-                                .clipShape(RoundedRectangle(cornerRadius: 12))
+                                .opacity(nameInput.trimmingCharacters(in: .whitespaces).isEmpty ? 0.5 : 1.0)
                             }
 
                             if let error = auth.errorMessage {
@@ -110,7 +128,7 @@ struct OnboardingView: View {
                                     .multilineTextAlignment(.center)
                             }
 
-                            Text("Required to save your scans and appear on leaderboards")
+                            Text("Your name will appear on leaderboards and posts")
                                 .font(SMVFont.micro())
                                 .foregroundStyle(Color.smvTextTertiary)
                                 .multilineTextAlignment(.center)
