@@ -8,6 +8,7 @@
 
 import SwiftUI
 import FirebaseAuth
+import FirebaseFirestore
 import AuthenticationServices
 import CryptoKit
 
@@ -118,22 +119,62 @@ final class AuthService {
 
             do {
                 let authResult = try await Auth.auth().signIn(with: credential)
+                let userId = authResult.user.uid
 
-                // Store display name if Apple provided it (only on first sign-in)
+                // Resolve display name: Apple credential → Firebase profile → UserDefaults → email
+                var resolvedName = ""
+
+                // 1. Try Apple-provided name (only available on first sign-in)
                 if let fullName = appleIDCredential.fullName {
                     let name = [fullName.givenName, fullName.familyName]
                         .compactMap { $0 }
                         .joined(separator: " ")
                     if !name.isEmpty {
-                        let changeRequest = authResult.user.createProfileChangeRequest()
-                        changeRequest.displayName = name
-                        try? await changeRequest.commitChanges()
-                        displayName = name
-                        defaults.set(name, forKey: "smv_displayName")
+                        resolvedName = name
                     }
                 }
 
-                state = .signedIn(userId: authResult.user.uid)
+                // 2. Fall back to existing Firebase profile name
+                if resolvedName.isEmpty, let existing = authResult.user.displayName, !existing.isEmpty {
+                    resolvedName = existing
+                }
+
+                // 3. Fall back to UserDefaults (persisted from a previous session)
+                if resolvedName.isEmpty, let stored = defaults.string(forKey: "smv_displayName"),
+                   !stored.isEmpty, stored != "Guest" {
+                    resolvedName = stored
+                }
+
+                // 4. Fall back to email prefix
+                if resolvedName.isEmpty, let email = authResult.user.email {
+                    resolvedName = String(email.prefix(while: { $0 != "@" }))
+                }
+
+                // 5. Last resort
+                if resolvedName.isEmpty {
+                    resolvedName = "User"
+                }
+
+                // Update Firebase Auth profile
+                let changeRequest = authResult.user.createProfileChangeRequest()
+                changeRequest.displayName = resolvedName
+                try? await changeRequest.commitChanges()
+
+                // Update local state
+                displayName = resolvedName
+                email = authResult.user.email ?? ""
+                defaults.set(resolvedName, forKey: "smv_displayName")
+
+                // Sync profile to Firestore (so user appears on leaderboard)
+                let db = Firestore.firestore()
+                try? await db.collection("users").document(userId).setData([
+                    "displayName": resolvedName,
+                    "email": email,
+                    "createdAt": FieldValue.serverTimestamp(),
+                    "updatedAt": FieldValue.serverTimestamp(),
+                ], merge: true)
+
+                state = .signedIn(userId: userId)
             } catch {
                 errorMessage = error.localizedDescription
             }

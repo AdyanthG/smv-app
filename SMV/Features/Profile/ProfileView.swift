@@ -206,7 +206,7 @@ struct ProfileView: View {
                 Spacer()
                 if scans.count > 6 {
                     Button("View All") {
-                        router.push(.progress)
+                        router.push(.scanHistory)
                     }
                     .font(SMVFont.micro())
                     .foregroundStyle(Color.smvCyan)

@@ -85,7 +85,6 @@ struct ThreadDetailView: View {
         .onAppear {
             if let thread {
                 isLiked = thread.isLiked
-                seedRepliesIfEmpty()
             }
         }
     }
@@ -317,28 +316,4 @@ struct ThreadDetailView: View {
         }
     }
 
-    // Seed sample replies on first view
-    private func seedRepliesIfEmpty() {
-        guard replies.isEmpty else { return }
-
-        let sampleReplies: [(String, String, String)] = [
-            ("Looking solid bro, keep going 💪", "reply_user_1", "Chris P"),
-            ("The progress is real. What's your skincare routine?", "reply_user_2", "Sam T"),
-            ("Honestly a huge improvement. Eye area is your biggest asset.", "reply_user_3", "Blake R"),
-            ("How long have you been mewing?", "reply_user_4", "Taylor V"),
-        ]
-
-        for (i, (body, authorId, authorName)) in sampleReplies.enumerated() {
-            let reply = ForumReply(
-                threadId: threadId,
-                authorId: authorId,
-                authorName: authorName,
-                authorHandle: authorName.lowercased().replacingOccurrences(of: " ", with: "_"),
-                body: body,
-                likeCount: Int.random(in: 1...50),
-                createdAt: Date.now.addingTimeInterval(-Double(3600 * (sampleReplies.count - i)))
-            )
-            modelContext.insert(reply)
-        }
-    }
 }

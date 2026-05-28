@@ -51,9 +51,21 @@ final class ScanResult {
     // ── Multi-angle scan flag ──
     var isMultiAngleScan: Bool = false
 
-    // ── Image ──
+    // ── Images (front is the primary, angles are supplementary) ──
     @Attribute(.externalStorage)
-    var imageData: Data?
+    var imageData: Data?      // Front
+
+    @Attribute(.externalStorage)
+    var leftImageData: Data?  // Left profile
+
+    @Attribute(.externalStorage)
+    var rightImageData: Data? // Right profile
+
+    @Attribute(.externalStorage)
+    var upImageData: Data?    // Looking up
+
+    @Attribute(.externalStorage)
+    var downImageData: Data?  // Looking down
 
     // ── Computed ──
     var tier: ScoreTier {
@@ -133,6 +145,10 @@ final class ScanResult {
         self.failoPenalty = failoPenalty
         self.isMultiAngleScan = isMultiAngleScan
         self.imageData = imageData
+        self.leftImageData = nil
+        self.rightImageData = nil
+        self.upImageData = nil
+        self.downImageData = nil
     }
 
     // MARK: - Convenience init from FaceMetrics

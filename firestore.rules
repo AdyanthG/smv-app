@@ -21,12 +21,25 @@ service cloud.firestore {
       allow create: if isOwner(userId);
       allow update: if isOwner(userId);
       allow delete: if isOwner(userId);
+
+      // ── Following subcollection ──
+      match /following/{targetId} {
+        allow read: if isSignedIn();
+        allow create, delete: if isOwner(userId);
+      }
+
+      // ── Followers subcollection ──
+      match /followers/{followerId} {
+        allow read: if isSignedIn();
+        // Followers are written by the follower (via batch), so check the follower
+        allow create, delete: if isSignedIn() && request.auth.uid == followerId;
+      }
     }
 
     // ── Scans Collection ──
     match /scans/{scanId} {
-      // Users can read their own scans
-      allow read: if isSignedIn() && resource.data.userId == request.auth.uid;
+      // Any signed-in user can read scans (needed for feed/leaderboard/profile views)
+      allow read: if isSignedIn();
 
       // Users can create scans for themselves
       allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
@@ -53,6 +66,35 @@ service cloud.firestore {
         allow read: if isSignedIn();
         allow create, delete: if isSignedIn() && likeUserId == request.auth.uid;
       }
+
+      // ── Comments subcollection ──
+      match /comments/{commentId} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn()
+          && request.resource.data.authorId == request.auth.uid;
+        allow delete: if isSignedIn()
+          && resource.data.authorId == request.auth.uid;
+      }
+    }
+
+    // ── Threads Collection ──
+    match /threads/{threadId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn();
+      // Only author can update/delete, but allow like/reply count increments from anyone
+      allow update: if isSignedIn();
+      allow delete: if isSignedIn()
+        && resource.data.authorId == request.auth.uid;
+    }
+
+    // ── Replies Collection ──
+    match /replies/{replyId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn();
+      // Allow like count updates from anyone signed in
+      allow update: if isSignedIn();
+      allow delete: if isSignedIn()
+        && resource.data.authorId == request.auth.uid;
     }
   }
 }

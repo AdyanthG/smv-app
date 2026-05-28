@@ -296,23 +296,48 @@ final class ScanViewModel: NSObject, AVCapturePhotoCaptureDelegate {
                 baseResult.overallScore = adjusted.smvClamped(to: 0.0...10.0)
                 baseResult.isMultiAngleScan = true
 
+                // ── Store all 5 angle images ──
+                for capture in captures {
+                    let jpegData = capture.image.jpegData(compressionQuality: 0.7)
+                    switch capture.position {
+                    case .front: baseResult.imageData = jpegData
+                    case .left:  baseResult.leftImageData = jpegData
+                    case .right: baseResult.rightImageData = jpegData
+                    case .up:    baseResult.upImageData = jpegData
+                    case .down:  baseResult.downImageData = jpegData
+                    }
+                }
+
                 progressTask.cancel()
                 withAnimation(.spring(duration: 0.3)) {
                     analysisProgress = 1.0
                 }
 
                 // ── Cloud sync ──
-                let frontImage = captures.first(where: { $0.position == .front })?.image ?? image
                 if let firestore, let storage {
                     Task {
-                        if let imageData = frontImage.jpegData(compressionQuality: 0.7) {
-                            let _ = await storage.uploadScanImage(
-                                userId: userId,
-                                scanId: baseResult.id,
-                                imageData: imageData
-                            )
+                        // Upload all angle images
+                        for capture in captures {
+                            if let imageData = capture.image.jpegData(compressionQuality: 0.7) {
+                                let suffix = capture.position == .front ? "" : "_\(capture.position)"
+                                let _ = await storage.uploadScanImage(
+                                    userId: userId,
+                                    scanId: baseResult.id + suffix,
+                                    imageData: imageData
+                                )
+                            }
                         }
+
+                        // Save scan result
                         let _ = await firestore.saveScanResult(userId: userId, result: baseResult)
+
+                        // Update user profile so they appear on leaderboard
+                        let displayName = UserDefaults.standard.string(forKey: "smv_displayName") ?? "User"
+                        await firestore.saveUserProfile(
+                            userId: userId,
+                            displayName: displayName,
+                            latestScore: baseResult.overallScore
+                        )
                     }
                 }
 
@@ -340,6 +365,14 @@ final class ScanViewModel: NSObject, AVCapturePhotoCaptureDelegate {
                         )
                     }
                     let _ = await firestore.saveScanResult(userId: userId, result: result)
+
+                    // Update user profile so they appear on leaderboard
+                    let displayName = UserDefaults.standard.string(forKey: "smv_displayName") ?? "User"
+                    await firestore.saveUserProfile(
+                        userId: userId,
+                        displayName: displayName,
+                        latestScore: result.overallScore
+                    )
                 }
             }
 

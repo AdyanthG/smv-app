@@ -23,6 +23,11 @@ struct ResultsView: View {
                     // Score Ring
                     scoreSection(result)
 
+                    // Angle Frames (if multi-angle scan)
+                    if result.isMultiAngleScan {
+                        angleFramesSection(result)
+                    }
+
                     // Radar Chart
                     radarSection(result)
 
@@ -90,6 +95,49 @@ struct ResultsView: View {
                 .font(SMVFont.caption())
                 .foregroundStyle(delta >= 0 ? Color.smvEmerald : Color.smvPink)
             }
+        }
+    }
+    // MARK: - Angle Frames
+
+    private func angleFramesSection(_ result: ScanResult) -> some View {
+        VStack(alignment: .leading, spacing: SMVSpacing.md) {
+            Text("Scan Angles")
+                .font(SMVFont.title())
+                .foregroundStyle(.white)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: SMVSpacing.sm) {
+                    angleFrame(label: "Front", data: result.imageData)
+                    angleFrame(label: "Left", data: result.leftImageData)
+                    angleFrame(label: "Right", data: result.rightImageData)
+                    angleFrame(label: "Up", data: result.upImageData)
+                    angleFrame(label: "Down", data: result.downImageData)
+                }
+            }
+        }
+    }
+
+    private func angleFrame(label: String, data: Data?) -> some View {
+        VStack(spacing: SMVSpacing.xs) {
+            if let data, let uiImage = UIImage(data: data) {
+                Image(uiImage: uiImage)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: 80, height: 100)
+                    .clipShape(RoundedRectangle(cornerRadius: SMVRadius.sm))
+            } else {
+                RoundedRectangle(cornerRadius: SMVRadius.sm)
+                    .fill(Color.smvSurface1)
+                    .frame(width: 80, height: 100)
+                    .overlay(
+                        Image(systemName: "person.fill")
+                            .font(.system(size: 20))
+                            .foregroundStyle(Color.smvTextTertiary)
+                    )
+            }
+            Text(label)
+                .font(SMVFont.micro())
+                .foregroundStyle(Color.smvTextSecondary)
         }
     }
 

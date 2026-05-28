@@ -80,32 +80,28 @@ struct OnboardingView: View {
                     // CTA
                     if currentPage == pages.count - 1 {
                         VStack(spacing: SMVSpacing.md) {
-                            // Primary: Sign in with Apple (real auth)
+                            // Primary: Sign in with Apple (required)
                             SignInWithAppleButton(.signIn) { request in
-                                let _ = auth.prepareAppleSignIn()
-                                request.requestedScopes = [.fullName, .email]
+                                let appleRequest = auth.prepareAppleSignIn()
+                                request.requestedScopes = appleRequest.requestedScopes
+                                request.nonce = appleRequest.nonce
                             } onCompletion: { result in
                                 Task {
                                     await auth.handleAppleSignIn(result: result)
-                                    auth.completeOnboarding()
-                                    router.dismiss()
+                                    if auth.currentUserId != nil {
+                                        auth.completeOnboarding()
+                                        router.dismiss()
+                                    }
                                 }
                             }
                             .signInWithAppleButtonStyle(.white)
                             .frame(height: 50)
                             .clipShape(RoundedRectangle(cornerRadius: 12))
 
-                            // Secondary: Continue as guest
-                            Button {
-                                haptics.success()
-                                auth.signInAsGuest()
-                                auth.completeOnboarding()
-                                router.dismiss()
-                            } label: {
-                                Text("Continue as Guest")
-                                    .font(SMVFont.caption())
-                                    .foregroundStyle(Color.smvTextSecondary)
-                            }
+                            Text("Required to save your scans and appear on leaderboards")
+                                .font(SMVFont.micro())
+                                .foregroundStyle(Color.smvTextTertiary)
+                                .multilineTextAlignment(.center)
                         }
                     } else {
                         GradientButton(title: "Next", icon: "arrow.right") {

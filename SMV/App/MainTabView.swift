@@ -51,6 +51,8 @@ struct MainTabView: View {
                             ThreadDetailView(threadId: threadId)
                         case .guideDetail(let title, let emoji, let author, let readTime):
                             GuideDetailView(title: title, emoji: emoji, author: author, readTime: readTime)
+                        case .scanHistory:
+                            ScanHistoryView()
                         }
                     }
             }
