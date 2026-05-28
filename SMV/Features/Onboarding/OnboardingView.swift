@@ -81,22 +81,34 @@ struct OnboardingView: View {
                     if currentPage == pages.count - 1 {
                         VStack(spacing: SMVSpacing.md) {
                             // Primary: Sign in with Apple (required)
-                            SignInWithAppleButton(.signIn) { request in
-                                let appleRequest = auth.prepareAppleSignIn()
-                                request.requestedScopes = appleRequest.requestedScopes
-                                request.nonce = appleRequest.nonce
-                            } onCompletion: { result in
-                                Task {
-                                    await auth.handleAppleSignIn(result: result)
-                                    if auth.currentUserId != nil {
-                                        auth.completeOnboarding()
-                                        router.dismiss()
+                            if auth.isLoading {
+                                ProgressView()
+                                    .tint(.white)
+                                    .frame(height: 50)
+                            } else {
+                                SignInWithAppleButton(.signIn) { request in
+                                    request.requestedScopes = [.fullName, .email]
+                                    request.nonce = auth.prepareNonce()
+                                } onCompletion: { result in
+                                    Task {
+                                        await auth.handleAppleSignIn(result: result)
+                                        if auth.currentUserId != nil {
+                                            auth.completeOnboarding()
+                                            router.dismiss()
+                                        }
                                     }
                                 }
+                                .signInWithAppleButtonStyle(.white)
+                                .frame(height: 50)
+                                .clipShape(RoundedRectangle(cornerRadius: 12))
                             }
-                            .signInWithAppleButtonStyle(.white)
-                            .frame(height: 50)
-                            .clipShape(RoundedRectangle(cornerRadius: 12))
+
+                            if let error = auth.errorMessage {
+                                Text(error)
+                                    .font(SMVFont.micro())
+                                    .foregroundStyle(Color.smvPink)
+                                    .multilineTextAlignment(.center)
+                            }
 
                             Text("Required to save your scans and appear on leaderboards")
                                 .font(SMVFont.micro())

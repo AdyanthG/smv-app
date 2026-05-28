@@ -95,6 +95,14 @@ final class AuthService {
         return request
     }
 
+    /// Generate a nonce and return its SHA256 hash for use with SignInWithAppleButton.
+    /// Call this in the onRequest closure, then set request.nonce = returned value.
+    func prepareNonce() -> String {
+        let nonce = randomNonceString()
+        currentNonce = nonce
+        return sha256(nonce)
+    }
+
     /// Handle the Apple Sign In result
     func handleAppleSignIn(result: Result<ASAuthorization, Error>) async {
         isLoading = true
