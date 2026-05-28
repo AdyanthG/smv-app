@@ -14,6 +14,7 @@ struct ResultsView: View {
     @State private var viewModel = ResultsViewModel()
     @Environment(\.modelContext) private var modelContext
     @Environment(Router.self) private var router
+    @Environment(AuthService.self) private var auth
     @Environment(HapticService.self) private var haptics
 
     var body: some View {
@@ -25,7 +26,8 @@ struct ResultsView: View {
 
                     // Angle Frames (if multi-angle scan)
                     if result.isMultiAngleScan {
-                        angleFramesSection(result)
+                        let isOwner = result.userId == auth.currentUserId
+                        angleFramesSection(result, showAllAngles: isOwner)
                     }
 
                     // Radar Chart
@@ -99,7 +101,7 @@ struct ResultsView: View {
     }
     // MARK: - Angle Frames
 
-    private func angleFramesSection(_ result: ScanResult) -> some View {
+    private func angleFramesSection(_ result: ScanResult, showAllAngles: Bool) -> some View {
         VStack(alignment: .leading, spacing: SMVSpacing.md) {
             Text("Scan Angles")
                 .font(SMVFont.title())
@@ -107,11 +109,16 @@ struct ResultsView: View {
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: SMVSpacing.sm) {
+                    // Public angles: Front, Left, Right (always shown)
                     angleFrame(label: "Front", data: result.imageData)
                     angleFrame(label: "Left", data: result.leftImageData)
                     angleFrame(label: "Right", data: result.rightImageData)
-                    angleFrame(label: "Up", data: result.upImageData)
-                    angleFrame(label: "Down", data: result.downImageData)
+
+                    // Private angles: Up, Down (owner only)
+                    if showAllAngles {
+                        angleFrame(label: "Up", data: result.upImageData)
+                        angleFrame(label: "Down", data: result.downImageData)
+                    }
                 }
             }
         }
