@@ -70,7 +70,7 @@ final class FaceAnalysisService {
 
     // MARK: - High-Level Async API (called by ScanViewModel)
 
-    func analyze(image: UIImage, userId: String) async -> ScanResult? {
+    func analyze(image: UIImage, userId: String, isAngled: Bool = false) async -> ScanResult? {
         errorMessage = nil
 
         guard let cgImage = image.cgImage else {
@@ -92,6 +92,8 @@ final class FaceAnalysisService {
 
         guard let observation = request.results?.first,
               let landmarks = observation.landmarks else {
+            // For angled captures, failing to detect is OK — skip silently
+            if isAngled { return nil }
             errorMessage = "No face detected. Please try again with better lighting."
             return nil
         }
@@ -105,11 +107,12 @@ final class FaceAnalysisService {
             image: image,
             captureQuality: Float(captureQuality),
             yaw: observation.yaw?.doubleValue,
-            roll: observation.roll?.doubleValue
+            roll: observation.roll?.doubleValue,
+            isAngled: isAngled
         )
 
-        // Block clearly invalid scans
-        if !metrics.quality.isValid {
+        // Block clearly invalid scans (but not for intentional angled captures)
+        if !isAngled && !metrics.quality.isValid {
             errorMessage = "Poor scan quality: \(metrics.quality.issues.joined(separator: ", ")). Please face the camera straight-on in good lighting."
             return nil
         }
@@ -174,7 +177,8 @@ final class FaceAnalysisService {
         image: UIImage,
         captureQuality: Float = 0.5,
         yaw: Double? = nil,
-        roll: Double? = nil
+        roll: Double? = nil,
+        isAngled: Bool = false
     ) -> FaceMetrics {
 
         // ── Step 0: Quality Gate ──
@@ -183,7 +187,8 @@ final class FaceAnalysisService {
             boundingBox: boundingBox,
             captureQuality: captureQuality,
             yaw: yaw,
-            roll: roll
+            roll: roll,
+            isAngled: isAngled
         )
 
         // ── Step 1: Extract raw measurements ──
@@ -286,19 +291,30 @@ final class FaceAnalysisService {
         }
 
         // ── Step 5: Weighted composite ──
-        let rawComposite =
-            eyeAreaScore * Weights.eyeArea +
-            jawScore * Weights.jaw +
-            symmetryRating * Weights.symmetry +
-            harmonyScore * Weights.harmony +
-            proportionsScore * Weights.proportions +
-            skinClarityScore * Weights.skinClarity
+        let rawComposite: Double
+        if isAngled {
+            // For side/up/down captures, only jaw and skin clarity are meaningful.
+            // Symmetry, FWHR, proportions are all geometrically distorted in 2D
+            // when the face is at an angle, so they'd produce artificially low scores.
+            rawComposite = jawScore * 0.55 + skinClarityScore * 0.25 + eyeAreaScore * 0.20
+        } else {
+            rawComposite =
+                eyeAreaScore * Weights.eyeArea +
+                jawScore * Weights.jaw +
+                symmetryRating * Weights.symmetry +
+                harmonyScore * Weights.harmony +
+                proportionsScore * Weights.proportions +
+                skinClarityScore * Weights.skinClarity
+        }
 
         // ── Step 6: Apply bell curve + penalties ──
         let bellCurved = applyBellCurve(rawScore: rawComposite)
         let qualityAdjusted = bellCurved * quality.qualityMultiplier
         let distortionAdjusted = qualityAdjusted * distortionPenalty
-        let finalScore = (distortionAdjusted * failoPenalty).smvClamped(to: 0.0...10.0)
+        // Skip failoPenalty for angled captures (failo detection uses frontal-only metrics)
+        let finalScore = isAngled
+            ? distortionAdjusted.smvClamped(to: 0.0...10.0)
+            : (distortionAdjusted * failoPenalty).smvClamped(to: 0.0...10.0)
 
         return FaceMetrics(
             quality: quality,
@@ -333,7 +349,8 @@ final class FaceAnalysisService {
         boundingBox: CGRect,
         captureQuality: Float,
         yaw: Double?,
-        roll: Double?
+        roll: Double?,
+        isAngled: Bool = false
     ) -> FaceQuality {
 
         var issues: [String] = []
@@ -341,26 +358,32 @@ final class FaceAnalysisService {
 
         // ── Yaw (head turned left/right) ──
         // Vision yaw: 0 = frontal, positive = turned right, negative = turned left
+        // Skip this penalty for intentional angled captures (multi-angle scan)
         let yawDeg = abs((yaw ?? 0) * (180.0 / .pi))
-        if yawDeg > 25 {
-            issues.append("Turn your face toward the camera")
-            multiplier *= 0.7
-        } else if yawDeg > 15 {
-            issues.append("Face slightly angled")
-            multiplier *= 0.88
-        } else if yawDeg > 8 {
-            // Minor angle — small penalty
-            multiplier *= 0.95
+        if !isAngled {
+            if yawDeg > 25 {
+                issues.append("Turn your face toward the camera")
+                multiplier *= 0.7
+            } else if yawDeg > 15 {
+                issues.append("Face slightly angled")
+                multiplier *= 0.88
+            } else if yawDeg > 8 {
+                // Minor angle — small penalty
+                multiplier *= 0.95
+            }
         }
 
         // ── Roll (head tilted sideways) ──
+        // Also skip for angled captures
         let rollDeg = abs((roll ?? 0) * (180.0 / .pi))
-        if rollDeg > 20 {
-            issues.append("Straighten your head")
-            multiplier *= 0.75
-        } else if rollDeg > 10 {
-            issues.append("Slight head tilt")
-            multiplier *= 0.90
+        if !isAngled {
+            if rollDeg > 20 {
+                issues.append("Straighten your head")
+                multiplier *= 0.75
+            } else if rollDeg > 10 {
+                issues.append("Slight head tilt")
+                multiplier *= 0.90
+            }
         }
 
         // ── Face size (too far / too close) ──

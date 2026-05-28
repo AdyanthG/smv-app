@@ -250,7 +250,8 @@ final class ScanViewModel: NSObject, AVCapturePhotoCaptureDelegate {
                     self.analysisProgress = min(0.85, base)
                 }
 
-                if let result = await analysisService.analyze(image: capture.image, userId: userId) {
+                let isAngled = capture.position != .front
+                if let result = await analysisService.analyze(image: capture.image, userId: userId, isAngled: isAngled) {
                     angleResults.append((position: capture.position, result: result))
                 }
             }

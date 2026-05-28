@@ -60,7 +60,6 @@ struct MainTabView: View {
             CustomTabBar()
         }
         .background(Color.smvBackground)
-        .ignoresSafeArea(.keyboard)
         .sheet(item: $router.presentedSheet) { sheet in
             switch sheet {
             case .createPost:
