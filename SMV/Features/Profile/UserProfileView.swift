@@ -30,6 +30,8 @@ struct UserProfileView: View {
     @State private var isLoaded = false
     @State private var showShareSheet = false
 
+    @State private var avatarURL: String?
+
     private var tier: ScoreTier { ScoreTier.from(score: profileScore) }
     private var isOwnProfile: Bool { userId == auth.currentUserId }
 
@@ -47,9 +49,24 @@ struct UserProfileView: View {
                                 Circle()
                                     .stroke(tier.color.opacity(0.3), lineWidth: 1)
                             )
-                        Text(profileName.prefix(1).uppercased())
-                            .font(SMVFont.displaySmall())
-                            .foregroundStyle(tier.color)
+
+                        if let urlStr = avatarURL, let url = URL(string: urlStr) {
+                            CachedAsyncImage(url: url) { image in
+                                image
+                                    .resizable()
+                                    .scaledToFill()
+                                    .frame(width: 84, height: 84)
+                                    .clipShape(Circle())
+                            } placeholder: {
+                                Text(profileName.prefix(1).uppercased())
+                                    .font(SMVFont.displaySmall())
+                                    .foregroundStyle(tier.color)
+                            }
+                        } else {
+                            Text(profileName.prefix(1).uppercased())
+                                .font(SMVFont.displaySmall())
+                                .foregroundStyle(tier.color)
+                        }
                     }
 
                     VStack(spacing: SMVSpacing.xs) {
@@ -95,40 +112,59 @@ struct UserProfileView: View {
                 }
                 .padding(.top, SMVSpacing.xxl)
 
-                // Stats
-                HStack(spacing: 0) {
-                    statItem(value: "\(scanCount)", label: "Scans")
-                    Divider()
-                        .frame(height: 32)
-                        .overlay(Color.smvSurface2)
-                    statItem(value: "\(followerCount)", label: "Followers")
-                    Divider()
-                        .frame(height: 32)
-                        .overlay(Color.smvSurface2)
-                    statItem(value: "\(followingCount)", label: "Following")
-                }
-                .padding(.vertical, SMVSpacing.lg)
-                .background(Color.smvSurface0)
-
-                // Actions
-                if !isOwnProfile {
-                    HStack(spacing: SMVSpacing.md) {
-                        if isFollowing {
-                            SecondaryButton(title: "Unfollow", icon: "person.badge.minus") {
-                                haptics.mediumImpact()
-                                Task { await toggleFollow() }
-                            }
-                        } else {
-                            GradientButton(title: "Follow", icon: "plus") {
-                                haptics.mediumImpact()
-                                Task { await toggleFollow() }
-                            }
-                        }
-                        SecondaryButton(title: "Share", icon: "square.and.arrow.up") {
-                            showShareSheet = true
-                        }
+                // Stats — only show after data loaded to prevent flash
+                if isLoaded {
+                    HStack(spacing: 0) {
+                        statItem(value: "\(scanCount)", label: "Scans")
+                        Divider()
+                            .frame(height: 32)
+                            .overlay(Color.smvSurface2)
+                        statItem(value: "\(followerCount)", label: "Followers")
+                        Divider()
+                            .frame(height: 32)
+                            .overlay(Color.smvSurface2)
+                        statItem(value: "\(followingCount)", label: "Following")
                     }
-                    .padding(.horizontal, SMVSpacing.xxl)
+                    .padding(.vertical, SMVSpacing.lg)
+                    .background(Color.smvSurface0)
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+
+                    // Actions
+                    if !isOwnProfile {
+                        HStack(spacing: SMVSpacing.md) {
+                            if isFollowing {
+                                SecondaryButton(title: "Unfollow", icon: "person.badge.minus") {
+                                    haptics.mediumImpact()
+                                    Task { await toggleFollow() }
+                                }
+                            } else {
+                                GradientButton(title: "Follow", icon: "plus") {
+                                    haptics.mediumImpact()
+                                    Task { await toggleFollow() }
+                                }
+                            }
+                            SecondaryButton(title: "Share", icon: "square.and.arrow.up") {
+                                showShareSheet = true
+                            }
+                        }
+                        .padding(.horizontal, SMVSpacing.xxl)
+                    }
+                } else {
+                    // Loading shimmer for stats
+                    HStack(spacing: 0) {
+                        statItem(value: "—", label: "Scans")
+                        Divider()
+                            .frame(height: 32)
+                            .overlay(Color.smvSurface2)
+                        statItem(value: "—", label: "Followers")
+                        Divider()
+                            .frame(height: 32)
+                            .overlay(Color.smvSurface2)
+                        statItem(value: "—", label: "Following")
+                    }
+                    .padding(.vertical, SMVSpacing.lg)
+                    .background(Color.smvSurface0)
+                    .redacted(reason: .placeholder)
                 }
 
                 // Recent scans
@@ -191,6 +227,7 @@ struct UserProfileView: View {
                     profileScore = data["latestScore"] as? Double ?? profileScore
                     bestScore = data["bestScore"] as? Double ?? profileScore
                     scanCount = data["scanCount"] as? Int ?? 0
+                    avatarURL = data["avatarURL"] as? String
                 }
 
                 let stats = await firestore.fetchUserStats(userId: userId)

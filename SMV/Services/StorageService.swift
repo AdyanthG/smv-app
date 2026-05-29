@@ -37,6 +37,24 @@ final class StorageService {
         }
     }
 
+    /// Upload a named angle image for a scan, returns the download URL
+    func uploadScanAngleImage(userId: String, scanId: String, angle: String, imageData: Data) async -> String? {
+        let ref = storage.reference()
+            .child("scans/\(userId)/\(scanId)_\(angle).jpg")
+
+        let metadata = StorageMetadata()
+        metadata.contentType = "image/jpeg"
+
+        do {
+            let _ = try await ref.putDataAsync(imageData, metadata: metadata)
+            let url = try await ref.downloadURL()
+            return url.absoluteString
+        } catch {
+            errorMessage = error.localizedDescription
+            return nil
+        }
+    }
+
     // MARK: - Profile Photos
 
     /// Upload a profile photo, returns the download URL

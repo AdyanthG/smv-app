@@ -12,23 +12,18 @@ struct ProfileView: View {
 
     @Environment(Router.self) private var router
     @Environment(AuthService.self) private var auth
+    @Environment(FirestoreService.self) private var firestore
     @Query(sort: \ScanResult.timestamp, order: .reverse) private var scans: [ScanResult]
+    @State private var streak: Int = 0
 
     var body: some View {
-        ScrollView {
-            VStack(spacing: SMVSpacing.xxl) {
-                heroSection
-                latestScanCard
-                scanHistoryGrid
-            }
-            .padding(.bottom, 100)
-        }
-        .background(Color.smvBackground)
-        .navigationTitle("Profile")
-        .navigationBarTitleDisplayMode(.large)
-        .toolbarColorScheme(.dark, for: .navigationBar)
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
+        VStack(spacing: 0) {
+            // Custom header
+            HStack {
+                Text("Profile")
+                    .font(.system(size: 28, weight: .bold))
+                    .foregroundStyle(.white)
+                Spacer()
                 Button {
                     router.push(.settings)
                 } label: {
@@ -36,6 +31,25 @@ struct ProfileView: View {
                         .font(.system(size: 16))
                         .foregroundStyle(Color.smvTextSecondary)
                 }
+            }
+            .padding(.horizontal, SMVSpacing.lg)
+            .padding(.top, SMVSpacing.sm)
+            .padding(.bottom, SMVSpacing.xs)
+
+            ScrollView {
+                VStack(spacing: SMVSpacing.xxl) {
+                    heroSection
+                    latestScanCard
+                    scanHistoryGrid
+                }
+                .padding(.bottom, 100)
+            }
+        }
+        .background(Color.smvBackground)
+        .navigationBarHidden(true)
+        .task {
+            if let userId = auth.currentUserId {
+                streak = await firestore.fetchUserStreak(userId: userId)
             }
         }
     }
@@ -46,6 +60,7 @@ struct ProfileView: View {
         VStack(spacing: SMVSpacing.lg) {
             AvatarView(
                 name: auth.displayName.isEmpty ? "You" : auth.displayName,
+                avatarURL: auth.avatarURL,
                 score: latestScore,
                 size: 80
             )
@@ -84,7 +99,7 @@ struct ProfileView: View {
             HStack(spacing: SMVSpacing.xxxl) {
                 statPill(label: "Scans", value: "\(scans.count)")
                 statPill(label: "Best", value: bestScore?.scoreFormatted ?? "—")
-                statPill(label: "Streak", value: "0d")
+                statPill(label: "Streak", value: streak > 0 ? "\(streak)d" : "—")
             }
         }
         .padding(.top, SMVSpacing.lg)
@@ -304,5 +319,6 @@ struct ProfileView: View {
     }
     .environment(Router())
     .environment(AuthService())
+    .environment(FirestoreService())
     .modelContainer(for: ScanResult.self, inMemory: true)
 }

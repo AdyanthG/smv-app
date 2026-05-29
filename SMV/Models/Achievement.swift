@@ -53,7 +53,7 @@ enum AchievementCategory: String, Codable, CaseIterable {
     case social = "Social"
     case streaks = "Streaks"
     case scores = "Scores"
-    case community = "Community"
+    case community = "Leaderboard"
 }
 
 // MARK: - Default Achievements

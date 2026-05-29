@@ -37,15 +37,12 @@ struct AvatarView: View {
 
             // Avatar content
             if let avatarURL, let url = URL(string: avatarURL) {
-                AsyncImage(url: url) { phase in
-                    switch phase {
-                    case .success(let image):
-                        image
-                            .resizable()
-                            .scaledToFill()
-                    default:
-                        initialsView
-                    }
+                CachedAsyncImage(url: url) { image in
+                    image
+                        .resizable()
+                        .scaledToFill()
+                } placeholder: {
+                    initialsView
                 }
                 .frame(width: size * 0.85, height: size * 0.85)
                 .clipShape(Circle())

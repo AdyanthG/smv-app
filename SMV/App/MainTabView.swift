@@ -35,8 +35,6 @@ struct MainTabView: View {
                             NotificationsView()
                         case .challengeDetail(let id):
                             ChallengeDetailView(challengeId: id)
-                        case .community:
-                            CommunityView()
                         case .progress:
                             ScoreProgressView()
                         case .referrals:
@@ -45,14 +43,10 @@ struct MainTabView: View {
                             PrivacyPolicyView()
                         case .termsOfService:
                             TermsOfServiceView()
-                        case .forumCategory(let title, let emoji):
-                            ThreadListView(categoryTitle: title, categoryEmoji: emoji)
-                        case .threadDetail(let threadId):
-                            ThreadDetailView(threadId: threadId)
-                        case .guideDetail(let title, let emoji, let author, let readTime):
-                            GuideDetailView(title: title, emoji: emoji, author: author, readTime: readTime)
                         case .scanHistory:
                             ScanHistoryView()
+                        case .scanDetail(_, let scanId):
+                            ResultsView(scanId: scanId)
                         }
                     }
             }
@@ -74,8 +68,8 @@ struct MainTabView: View {
                 Text("Scan Options")
             case .shareCard(let scanId):
                 Text("Share: \(scanId)")
-            case .createThread(let category):
-                CreateThreadView(category: category)
+            case .scanGallery(let userId, let displayName):
+                ScanGalleryView(userId: userId, displayName: displayName)
             }
         }
         .fullScreenCover(item: $router.presentedFullScreen) { dest in
@@ -106,8 +100,8 @@ private struct TabContent: View {
             LeaderboardView()
         case .scan:
             ScanView()
-        case .community:
-            CommunityView()
+        case .vote:
+            VoteView()
         case .profile:
             ProfileView()
         }
@@ -223,9 +217,6 @@ private struct ScanTabButton: View {
             Challenge.self,
             Achievement.self,
             SMVNotification.self,
-            ForumCategory.self,
-            ForumThread.self,
-            ForumReply.self,
             Comment.self,
         ], inMemory: true)
 }

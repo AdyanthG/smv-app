@@ -12,10 +12,12 @@ struct SettingsView: View {
     @Environment(AuthService.self) private var auth
     @Environment(Router.self) private var router
     @Environment(HapticService.self) private var haptics
+    @Environment(FirestoreService.self) private var firestore
     @State private var showDeleteConfirmation = false
     @State private var showSignOutConfirmation = false
     @State private var notificationsEnabled = true
     @State private var hapticFeedback = true
+    @State private var isProfilePublic = true
 
     var body: some View {
         List {
@@ -40,6 +42,32 @@ struct SettingsView: View {
             } header: {
                 Text("Account")
             }
+
+            // Privacy
+            Section {
+                Toggle(isOn: $isProfilePublic) {
+                    Label {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Public Profile")
+                                .foregroundStyle(.white)
+                            Text("Appear on leaderboards and in voting")
+                                .font(SMVFont.micro())
+                                .foregroundStyle(Color.smvTextTertiary)
+                        }
+                    } icon: {
+                        Image(systemName: isProfilePublic ? "eye.fill" : "eye.slash.fill")
+                    }
+                }
+                .tint(Color.smvCyan)
+                .onChange(of: isProfilePublic) { _, newValue in
+                    if let userId = auth.currentUserId {
+                        Task { await firestore.setProfilePublic(userId: userId, isPublic: newValue) }
+                    }
+                }
+            } header: {
+                Text("Privacy")
+            }
+            .listRowBackground(Color.smvSurface1)
 
             // Preferences
             Section {
@@ -172,6 +200,14 @@ struct SettingsView: View {
         } message: {
             Text("This action cannot be undone. All your data will be permanently deleted.")
         }
+        .task {
+            // Load current privacy setting
+            if let userId = auth.currentUserId,
+               let data = await firestore.fetchUserProfile(userId: userId) {
+                // Default to true if field doesn't exist yet
+                isProfilePublic = data["isProfilePublic"] as? Bool ?? true
+            }
+        }
     }
 }
 
@@ -180,4 +216,5 @@ struct SettingsView: View {
         .environment(AuthService())
         .environment(Router())
         .environment(HapticService())
+        .environment(FirestoreService())
 }

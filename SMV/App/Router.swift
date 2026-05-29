@@ -23,7 +23,7 @@ final class Router {
         case feed = 0
         case leaderboard
         case scan
-        case community
+        case vote
         case profile
 
         var id: Int { rawValue }
@@ -33,7 +33,7 @@ final class Router {
             case .feed:        return "Feed"
             case .leaderboard: return "Ranks"
             case .scan:        return "Scan"
-            case .community:   return "Community"
+            case .vote:        return "Vote"
             case .profile:     return "Profile"
             }
         }
@@ -43,7 +43,7 @@ final class Router {
             case .feed:        return "square.stack.fill"
             case .leaderboard: return "trophy.fill"
             case .scan:        return "bolt.fill"
-            case .community:   return "bubble.left.and.bubble.right.fill"
+            case .vote:        return "hand.thumbsup.fill"
             case .profile:     return "person.fill"
             }
         }
@@ -59,15 +59,12 @@ final class Router {
         case editProfile
         case notifications
         case challengeDetail(challengeId: String)
-        case community
         case progress
         case referrals
         case privacyPolicy
         case termsOfService
-        case forumCategory(title: String, emoji: String)
-        case threadDetail(threadId: String)
-        case guideDetail(title: String, emoji: String, author: String, readTime: String)
         case scanHistory
+        case scanDetail(userId: String, scanId: String)
     }
 
     // ── Modal Sheets ──
@@ -77,7 +74,7 @@ final class Router {
         case paywall
         case scanOptions
         case shareCard(scanId: String)
-        case createThread(category: String)
+        case scanGallery(userId: String, displayName: String)
 
         var id: String {
             switch self {
@@ -85,7 +82,7 @@ final class Router {
             case .paywall:                 return "paywall"
             case .scanOptions:             return "scanOptions"
             case .shareCard(let id):       return "shareCard_\(id)"
-            case .createThread(let cat):   return "createThread_\(cat)"
+            case .scanGallery(let id, _):  return "scanGallery_\(id)"
             }
         }
     }

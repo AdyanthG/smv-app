@@ -24,6 +24,7 @@ final class FirestoreService {
         handle: String = "",
         bio: String = "",
         gender: String = "Male",
+        avatarURL: String? = nil,
         latestScore: Double? = nil
     ) async {
         var data: [String: Any] = [
@@ -35,6 +36,9 @@ final class FirestoreService {
         ]
         if let score = latestScore {
             data["latestScore"] = score
+        }
+        if let avatar = avatarURL {
+            data["avatarURL"] = avatar
         }
 
         do {
@@ -87,19 +91,106 @@ final class FirestoreService {
             // Update user's latest score and stats
             let userRef = db.collection("users").document(userId)
             let userDoc = try await userRef.getDocument()
-            let currentBest = userDoc.data()?["bestScore"] as? Double ?? 0
+            let userData = userDoc.data() ?? [:]
+            let currentBest = userData["bestScore"] as? Double ?? 0
+            let currentScanCount = userData["scanCount"] as? Int ?? 0
 
-            try await userRef.setData([
+            // Per-category current bests
+            let currentBestEyeArea = userData["bestEyeAreaScore"] as? Double ?? 0
+            let currentBestJaw = userData["bestJawScore"] as? Double ?? 0
+            let currentBestSymmetry = userData["bestSymmetryScore"] as? Double ?? 0
+            let currentBestHarmony = userData["bestHarmonyScore"] as? Double ?? 0
+            let currentBestProportions = userData["bestProportionsScore"] as? Double ?? 0
+            let currentBestSkinClarity = userData["bestSkinClarityScore"] as? Double ?? 0
+
+            // First score tracking (for Most Improved)
+            let firstScore = userData["firstScore"] as? Double ?? result.overallScore
+
+            // Improvement rate: (latest - first) / sqrt(scanCount + 1)
+            // sqrt prevents gaming by doing many bad scans then one good one
+            let improvement = max(0, result.overallScore - firstScore)
+            let improvementRate = improvement / sqrt(Double(currentScanCount + 1))
+
+            // Streak calculation
+            let streak = computeStreak(lastScanTimestamp: userData["lastScanAt"], currentStreak: userData["streak"] as? Int ?? 0)
+
+            var updateData: [String: Any] = [
                 "latestScore": result.overallScore,
                 "bestScore": max(currentBest, result.overallScore),
+                // Per-category latest scores
+                "latestEyeAreaScore": result.eyeAreaScore,
+                "latestJawScore": result.jawScore,
+                "latestSymmetryScore": result.symmetryScore,
+                "latestHarmonyScore": result.harmonyScore,
+                "latestProportionsScore": result.proportionsScore,
+                "latestSkinClarityScore": result.skinClarityScore,
+                // Per-category best scores (used for leaderboard ranking)
+                "bestEyeAreaScore": max(currentBestEyeArea, result.eyeAreaScore),
+                "bestJawScore": max(currentBestJaw, result.jawScore),
+                "bestSymmetryScore": max(currentBestSymmetry, result.symmetryScore),
+                "bestHarmonyScore": max(currentBestHarmony, result.harmonyScore),
+                "bestProportionsScore": max(currentBestProportions, result.proportionsScore),
+                "bestSkinClarityScore": max(currentBestSkinClarity, result.skinClarityScore),
+                "improvementRate": improvementRate,
                 "scanCount": FieldValue.increment(Int64(1)),
                 "lastScanAt": FieldValue.serverTimestamp(),
-            ], merge: true)
+                "streak": streak,
+                "isProfilePublic": true, // Default to public
+            ]
+
+            // Only set firstScore on the very first scan
+            if currentScanCount == 0 {
+                updateData["firstScore"] = result.overallScore
+            }
+
+            try await userRef.setData(updateData, merge: true)
 
             return docRef.documentID
         } catch {
             errorMessage = error.localizedDescription
             return nil
+        }
+    }
+
+    /// Update a scan document with image download URLs after storage upload
+    func updateScanImageURLs(scanDocId: String, urls: [String: String]) async {
+        do {
+            try await db.collection("scans").document(scanDocId).setData(urls, merge: true)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    /// Fetch all angle image URLs for a user's latest scan (for gallery view)
+    func fetchScanGalleryURLs(userId: String) async -> [(angle: String, url: String)] {
+        do {
+            let snapshot = try await db.collection("scans")
+                .whereField("userId", isEqualTo: userId)
+                .order(by: "timestamp", descending: true)
+                .limit(to: 1)
+                .getDocuments()
+
+            guard let doc = snapshot.documents.first else { return [] }
+            let data = doc.data()
+            var results: [(String, String)] = []
+
+            let angleKeys = [
+                ("Front", "frontImageURL"),
+                ("Left", "leftImageURL"),
+                ("Right", "rightImageURL"),
+                ("Up", "upTiltImageURL"),
+                ("Down", "downTiltImageURL"),
+            ]
+
+            for (label, key) in angleKeys {
+                if let url = data[key] as? String {
+                    results.append((label, url))
+                }
+            }
+
+            return results
+        } catch {
+            return []
         }
     }
 
@@ -207,19 +298,83 @@ final class FirestoreService {
 
     // MARK: - Leaderboard
 
+    /// EST timezone used for leaderboard timeframe boundaries
+    private var estTimeZone: TimeZone {
+        TimeZone(identifier: "America/New_York") ?? TimeZone(secondsFromGMT: -5 * 3600)!
+    }
+
     func fetchLeaderboard(
-        category: String = "global",
-        timeframe: String = "allTime",
+        category: String = "Global",
+        timeframe: String = "All Time",
         limit: Int = 50
     ) async -> [[String: Any]] {
         do {
-            let snapshot = try await db.collection("users")
-                .order(by: "latestScore", descending: true)
-                .limit(to: limit)
-                .getDocuments()
-            return snapshot.documents.enumerated().map { index, doc in
+            // Determine the sort field from category
+            let sortField: String
+            if let cat = LeaderboardCategory(rawValue: category) {
+                sortField = cat.firestoreField
+            } else {
+                sortField = "bestScore"
+            }
+
+            // Always fetch by score — avoids Firestore composite index requirements
+            let query: Query = db.collection("users")
+                .order(by: sortField, descending: true)
+                .limit(to: limit * 3) // Over-fetch to account for timeframe filtering
+
+            let snapshot = try await query.getDocuments()
+
+            // Compute EST-based cutoff dates for timeframe filtering
+            var estCalendar = Calendar.current
+            estCalendar.timeZone = estTimeZone
+            let now = Date()
+
+            let cutoffDate: Date? = {
+                switch timeframe {
+                case "Today":
+                    return estCalendar.startOfDay(for: now)
+                case "This Week":
+                    return estCalendar.date(byAdding: .day, value: -7, to: estCalendar.startOfDay(for: now))
+                default:
+                    return nil // All Time — no cutoff
+                }
+            }()
+
+            // Filter and sort in-memory
+            let isMostImproved = category == "Most Improved"
+            let results = snapshot.documents.compactMap { doc -> [String: Any]? in
                 var data = doc.data()
                 data["id"] = doc.documentID
+
+                // Filter out private profiles
+                if data["isProfilePublic"] as? Bool == false { return nil }
+
+                // Must have a score > 0 in the sort field
+                let score = data[sortField] as? Double ?? 0
+                if score <= 0 { return nil }
+
+                // For Most Improved, require at least 2 scans
+                if isMostImproved {
+                    let scanCount = data["scanCount"] as? Int ?? 0
+                    if scanCount < 2 { return nil }
+                }
+
+                // Apply timeframe filter (in-memory using EST)
+                if let cutoff = cutoffDate {
+                    guard let lastScanTimestamp = data["lastScanAt"] as? Timestamp else { return nil }
+                    if lastScanTimestamp.dateValue() < cutoff { return nil }
+                }
+
+                return data
+            }.sorted { a, b in
+                let aScore = a[sortField] as? Double ?? 0
+                let bScore = b[sortField] as? Double ?? 0
+                return aScore > bScore
+            }
+
+            // Apply final limit and assign ranks
+            return Array(results.prefix(limit)).enumerated().map { index, item in
+                var data = item
                 data["rank"] = index + 1
                 return data
             }
@@ -322,7 +477,7 @@ final class FirestoreService {
             .collection("followers").document(userId)
         batch.setData(["timestamp": FieldValue.serverTimestamp()], forDocument: followersRef)
 
-        // Increment counts
+        // Increment counts using updateData (only touches specified fields)
         let userRef = db.collection("users").document(userId)
         batch.updateData(["followingCount": FieldValue.increment(Int64(1))], forDocument: userRef)
 
@@ -395,136 +550,146 @@ final class FirestoreService {
         }
     }
 
-    // MARK: - Forum Threads
+    // MARK: - Voting System
 
-    func createThread(
-        id: String,
-        categoryId: String,
-        authorId: String,
-        authorName: String,
-        authorHandle: String,
-        authorScore: Double?,
-        title: String,
-        body: String
-    ) async {
-        var data: [String: Any] = [
-            "categoryId": categoryId,
-            "authorId": authorId,
-            "authorName": authorName,
-            "authorHandle": authorHandle,
-            "title": title,
-            "body": body,
-            "replyCount": 0,
-            "viewCount": 0,
-            "likeCount": 0,
-            "isPinned": false,
-            "createdAt": FieldValue.serverTimestamp(),
-            "lastActivityAt": FieldValue.serverTimestamp(),
-        ]
-        if let score = authorScore {
-            data["authorScore"] = score
-        }
-
+    /// Fetch a pair of users with similar scores for comparison voting
+    func fetchVotePair(excludeUserId: String) async -> ([String: Any]?, [String: Any]?) {
         do {
-            try await db.collection("threads").document(id).setData(data)
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
-
-    func fetchThreads(categoryId: String) async -> [[String: Any]] {
-        do {
-            let snapshot = try await db.collection("threads")
-                .whereField("categoryId", isEqualTo: categoryId)
-                .order(by: "lastActivityAt", descending: true)
-                .limit(to: 50)
-                .getDocuments()
-
-            return snapshot.documents.map { doc in
-                var data = doc.data()
-                data["id"] = doc.documentID
-                return data
-            }
-        } catch {
-            errorMessage = error.localizedDescription
-            return []
-        }
-    }
-
-    // MARK: - Forum Replies
-
-    func createReply(
-        id: String,
-        threadId: String,
-        authorId: String,
-        authorName: String,
-        authorHandle: String,
-        authorScore: Double?,
-        body: String
-    ) async {
-        var data: [String: Any] = [
-            "threadId": threadId,
-            "authorId": authorId,
-            "authorName": authorName,
-            "authorHandle": authorHandle,
-            "body": body,
-            "likeCount": 0,
-            "createdAt": FieldValue.serverTimestamp(),
-        ]
-        if let score = authorScore {
-            data["authorScore"] = score
-        }
-
-        do {
-            try await db.collection("replies").document(id).setData(data)
-            // Increment reply count on thread
-            try await db.collection("threads").document(threadId).updateData([
-                "replyCount": FieldValue.increment(Int64(1)),
-                "lastActivityAt": FieldValue.serverTimestamp(),
-            ])
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
-
-    func fetchReplies(threadId: String) async -> [[String: Any]] {
-        do {
-            let snapshot = try await db.collection("replies")
-                .whereField("threadId", isEqualTo: threadId)
-                .order(by: "createdAt", descending: false)
+            // Fetch users who have scanned, ordered by score
+            let snapshot = try await db.collection("users")
+                .whereField("scanCount", isGreaterThan: 0)
+                .order(by: "scanCount")
+                .order(by: "latestScore", descending: true)
                 .limit(to: 100)
                 .getDocuments()
 
-            return snapshot.documents.map { doc in
-                var data = doc.data()
-                data["id"] = doc.documentID
-                return data
+            var candidates = snapshot.documents
+                .filter { $0.documentID != excludeUserId }
+                .map { doc -> [String: Any] in
+                    var data = doc.data()
+                    data["id"] = doc.documentID
+                    return data
+                }
+                .filter { ($0["latestScore"] as? Double ?? 0) > 0 }
+
+            guard candidates.count >= 2 else { return (nil, nil) }
+
+            // Shuffle then pick a pair with scores within ±1.0
+            candidates.shuffle()
+            let first = candidates[0]
+            let firstScore = first["latestScore"] as? Double ?? 5.0
+
+            // Find a match within ±1.0 score range
+            if let matchIdx = candidates.dropFirst().firstIndex(where: { candidate in
+                let score = candidate["latestScore"] as? Double ?? 5.0
+                return abs(score - firstScore) <= 1.0
+            }) {
+                return (first, candidates[matchIdx])
             }
+
+            // Fallback: just pick two random
+            return (candidates[0], candidates[1])
         } catch {
             errorMessage = error.localizedDescription
-            return []
+            return (nil, nil)
         }
     }
 
-    // MARK: - Forum Likes
+    /// Record a vote: increment winner's voteWins, loser's voteLosses
+    func recordVote(winnerId: String, loserId: String, voterId: String) async {
+        let batch = db.batch()
 
-    func likeThread(threadId: String, increment: Bool) async {
+        let winnerRef = db.collection("users").document(winnerId)
+        batch.setData(["voteWins": FieldValue.increment(Int64(1))], forDocument: winnerRef, merge: true)
+
+        let loserRef = db.collection("users").document(loserId)
+        batch.setData(["voteLosses": FieldValue.increment(Int64(1))], forDocument: loserRef, merge: true)
+
+        // Record the individual vote for audit/anti-abuse
+        let voteRef = db.collection("votes").document()
+        batch.setData([
+            "voterId": voterId,
+            "winnerId": winnerId,
+            "loserId": loserId,
+            "timestamp": FieldValue.serverTimestamp(),
+        ], forDocument: voteRef)
+
         do {
-            try await db.collection("threads").document(threadId).updateData([
-                "likeCount": FieldValue.increment(Int64(increment ? 1 : -1)),
-            ])
+            try await batch.commit()
         } catch {
             errorMessage = error.localizedDescription
         }
     }
 
-    func likeReply(replyId: String, increment: Bool) async {
+    /// Fetch a user's scan images (front/left/right URLs) for voting cards
+    func fetchLatestScanImages(userId: String) async -> [String: String] {
         do {
-            try await db.collection("replies").document(replyId).updateData([
-                "likeCount": FieldValue.increment(Int64(increment ? 1 : -1)),
-            ])
+            let snapshot = try await db.collection("scans")
+                .whereField("userId", isEqualTo: userId)
+                .order(by: "timestamp", descending: true)
+                .limit(to: 1)
+                .getDocuments()
+
+            guard let doc = snapshot.documents.first else { return [:] }
+            let data = doc.data()
+            var urls: [String: String] = [:]
+            if let url = data["frontImageURL"] as? String { urls["front"] = url }
+            if let url = data["leftImageURL"] as? String { urls["left"] = url }
+            if let url = data["rightImageURL"] as? String { urls["right"] = url }
+            if let url = data["upTiltImageURL"] as? String { urls["up"] = url }
+            if let url = data["downTiltImageURL"] as? String { urls["down"] = url }
+            return urls
+        } catch {
+            return [:]
+        }
+    }
+
+    // MARK: - Profile Visibility
+
+    func setProfilePublic(userId: String, isPublic: Bool) async {
+        do {
+            try await db.collection("users").document(userId).setData([
+                "isProfilePublic": isPublic,
+            ], merge: true)
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    // MARK: - Streak
+
+    func fetchUserStreak(userId: String) async -> Int {
+        do {
+            let doc = try await db.collection("users").document(userId).getDocument()
+            return doc.data()?["streak"] as? Int ?? 0
+        } catch {
+            return 0
+        }
+    }
+
+    /// Compute streak: if last scan was within 24-48h (different calendar day), increment.
+    /// If same calendar day, keep current. If >48h gap, reset to 1.
+    private func computeStreak(lastScanTimestamp: Any?, currentStreak: Int) -> Int {
+        guard let timestamp = lastScanTimestamp as? Timestamp else {
+            return 1 // First scan ever
+        }
+
+        let lastScanDate = timestamp.dateValue()
+        let calendar = Calendar.current
+        let now = Date()
+
+        // Same calendar day → streak stays the same
+        if calendar.isDate(lastScanDate, inSameDayAs: now) {
+            return max(1, currentStreak)
+        }
+
+        // Yesterday → increment streak
+        if let yesterday = calendar.date(byAdding: .day, value: -1, to: now),
+           calendar.isDate(lastScanDate, inSameDayAs: yesterday) {
+            return currentStreak + 1
+        }
+
+        // >1 day gap → reset to 1
+        return 1
     }
 }

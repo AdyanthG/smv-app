@@ -19,6 +19,24 @@ struct FeedView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            // Custom header
+            HStack {
+                Text("Feed")
+                    .font(.system(size: 28, weight: .bold))
+                    .foregroundStyle(.white)
+                Spacer()
+                Button {
+                    router.present(.createPost)
+                } label: {
+                    Image(systemName: "plus.circle.fill")
+                        .font(.system(size: 22))
+                        .foregroundStyle(Color.smvCyan)
+                }
+            }
+            .padding(.horizontal, SMVSpacing.lg)
+            .padding(.top, SMVSpacing.sm)
+            .padding(.bottom, SMVSpacing.xs)
+
             feedTabBar
 
             if isLoading && posts.isEmpty {
@@ -51,29 +69,7 @@ struct FeedView: View {
             }
         }
         .background(Color.smvBackground)
-        .navigationTitle("Feed")
-        .navigationBarTitleDisplayMode(.large)
-        .toolbarColorScheme(.dark, for: .navigationBar)
-        .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
-                Button {
-                    router.push(.community)
-                } label: {
-                    Text(".org")
-                        .font(.system(size: 12, weight: .bold, design: .monospaced))
-                        .foregroundStyle(Color.smvTextTertiary.opacity(0.5))
-                }
-            }
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    router.present(.createPost)
-                } label: {
-                    Image(systemName: "plus.circle.fill")
-                        .font(.system(size: 22))
-                        .foregroundStyle(Color.smvCyan)
-                }
-            }
-        }
+        .navigationBarHidden(true)
         .task {
             if posts.isEmpty {
                 await loadPosts()

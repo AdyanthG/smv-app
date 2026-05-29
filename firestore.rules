@@ -19,7 +19,11 @@ service cloud.firestore {
 
       // Only the user can write their own profile
       allow create: if isOwner(userId);
-      allow update: if isOwner(userId);
+      // Allow own profile updates, OR follower/vote count updates from any signed-in user
+      allow update: if isOwner(userId)
+        || (isSignedIn()
+            && request.resource.data.diff(resource.data).affectedKeys()
+               .hasOnly(['followerCount', 'voteWins', 'voteLosses']));
       allow delete: if isOwner(userId);
 
       // ── Following subcollection ──

@@ -47,9 +47,35 @@ struct EditProfileView: View {
                         Circle()
                             .fill(Color.smvSurface2)
                             .frame(width: 80, height: 80)
-                        Text(displayName.prefix(1).uppercased())
-                            .font(SMVFont.displaySmall())
-                            .foregroundStyle(Color.smvCyan)
+
+                        if let photoData = selectedPhotoData,
+                           let uiImage = UIImage(data: photoData) {
+                            Image(uiImage: uiImage)
+                                .resizable()
+                                .scaledToFill()
+                                .frame(width: 76, height: 76)
+                                .clipShape(Circle())
+                        } else if let urlStr = auth.avatarURL ?? UserDefaults.standard.string(forKey: "smv_avatarURL"),
+                                  let url = URL(string: urlStr) {
+                            AsyncImage(url: url) { phase in
+                                switch phase {
+                                case .success(let image):
+                                    image
+                                        .resizable()
+                                        .scaledToFill()
+                                        .frame(width: 76, height: 76)
+                                        .clipShape(Circle())
+                                default:
+                                    Text(displayName.prefix(1).uppercased())
+                                        .font(SMVFont.displaySmall())
+                                        .foregroundStyle(Color.smvCyan)
+                                }
+                            }
+                        } else {
+                            Text(displayName.prefix(1).uppercased())
+                                .font(SMVFont.displaySmall())
+                                .foregroundStyle(Color.smvCyan)
+                        }
                     }
                     PhotosPicker(selection: $selectedPhotoItem, matching: .images) {
                         Text(selectedPhotoData != nil ? "Photo Selected ✓" : "Change Photo")
@@ -190,11 +216,17 @@ struct EditProfileView: View {
         if let userId = auth.currentUserId {
             Task {
                 // Upload profile photo if selected
+                var uploadedAvatarURL: String?
                 if let photoData = selectedPhotoData {
-                    let _ = await storage.uploadProfilePhoto(
+                    uploadedAvatarURL = await storage.uploadProfilePhoto(
                         userId: userId,
                         imageData: photoData
                     )
+                    if let url = uploadedAvatarURL {
+                        // Cache avatar URL locally and in AuthService
+                        defaults.set(url, forKey: "smv_avatarURL")
+                        auth.avatarURL = url
+                    }
                 }
 
                 await firestore.saveUserProfile(
@@ -202,7 +234,8 @@ struct EditProfileView: View {
                     displayName: displayName,
                     handle: handle,
                     bio: bio,
-                    gender: selectedGender.rawValue
+                    gender: selectedGender.rawValue,
+                    avatarURL: uploadedAvatarURL
                 )
                 isSaving = false
                 dismiss()

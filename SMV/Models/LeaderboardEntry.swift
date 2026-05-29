@@ -62,9 +62,25 @@ final class LeaderboardEntry {
 
 enum LeaderboardCategory: String, Codable, CaseIterable {
     case global = "Global"
-    case weekly = "Weekly"
+    case eyeArea = "Eye Area"
     case jawline = "Jawline"
     case symmetry = "Symmetry"
-    case eyeArea = "Eye Area"
+    case harmony = "Harmony"
+    case proportions = "Proportions"
+    case skinClarity = "Skin"
     case mostImproved = "Most Improved"
+
+    /// The Firestore field name used for ranking in this category
+    var firestoreField: String {
+        switch self {
+        case .global:       return "bestScore"
+        case .eyeArea:      return "bestEyeAreaScore"
+        case .jawline:      return "bestJawScore"
+        case .symmetry:     return "bestSymmetryScore"
+        case .harmony:      return "bestHarmonyScore"
+        case .proportions:  return "bestProportionsScore"
+        case .skinClarity:  return "bestSkinClarityScore"
+        case .mostImproved: return "improvementRate"
+        }
+    }
 }

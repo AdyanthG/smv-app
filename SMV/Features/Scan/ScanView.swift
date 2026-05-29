@@ -214,29 +214,6 @@ struct ScanView: View {
                         .foregroundStyle(Color.smvAmber)
                     }
 
-                    // Debug overlay — real-time angle readout
-                    #if DEBUG
-                    VStack(alignment: .leading, spacing: 2) {
-                        let tracker = viewModel.faceTracker
-                        let yawDeg = String(format: "%.1f°", tracker.relativeYaw * 57.3)
-                        let pitchDeg = String(format: "%.1f°", tracker.relativePitch * 57.3)
-                        let tgtYaw = String(format: "%.1f°", tracker.currentPosition.targetYaw * 57.3)
-                        let tgtPitch = String(format: "%.1f°", tracker.currentPosition.targetPitch * 57.3)
-                        let tolY = String(format: "%.1f°", tracker.currentPosition.yawTolerance * 57.3)
-                        let tolP = String(format: "%.1f°", tracker.currentPosition.pitchTolerance * 57.3)
-
-                        Text("Yaw: \(yawDeg) tgt:\(tgtYaw) ±\(tolY)")
-                        Text("Pit: \(pitchDeg) tgt:\(tgtPitch) ±\(tolP)")
-                        Text(tracker.isAligned ? "✓ ALIGNED" : "○ seeking…")
-                    }
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
-                    .foregroundStyle(.green)
-                    .padding(6)
-                    .background(Color.black.opacity(0.6))
-                    .cornerRadius(6)
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
-                    .padding(.leading, 8)
-                    #endif
                 }
 
                 Spacer()

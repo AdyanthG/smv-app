@@ -18,8 +18,18 @@ struct LeaderboardView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            // Custom header — inline with no clipping
+            HStack {
+                Text("Ranks")
+                    .font(.system(size: 28, weight: .bold))
+                    .foregroundStyle(.white)
+                Spacer()
+            }
+            .padding(.horizontal, SMVSpacing.lg)
+            .padding(.top, SMVSpacing.sm)
+            .padding(.bottom, SMVSpacing.xs)
+
             timeframeToggle
-                .padding(.top, SMVSpacing.sm)
             categoryFilter
                 .padding(.top, SMVSpacing.md)
 
@@ -46,15 +56,16 @@ struct LeaderboardView: View {
             }
         }
         .background(Color.smvBackground)
-        .navigationTitle("Ranks")
-        .navigationBarTitleDisplayMode(.large)
-        .toolbarColorScheme(.dark, for: .navigationBar)
+        .navigationBarHidden(true)
         .task {
             if entries.isEmpty {
                 await loadLeaderboard()
             }
         }
         .onChange(of: selectedTimeframe) {
+            Task { await loadLeaderboard() }
+        }
+        .onChange(of: selectedCategory) {
             Task { await loadLeaderboard() }
         }
     }
@@ -153,17 +164,24 @@ struct LeaderboardView: View {
                     .foregroundStyle(Color.smvAmber)
             }
 
+            // Avatar tap → scan gallery (full screen swipeable)
             Button {
-                router.push(.userProfile(userId: entry.userId))
+                router.present(.scanGallery(userId: entry.userId, displayName: entry.name))
             } label: {
-                AvatarView(name: entry.name, score: entry.score, size: rank == 1 ? 56 : 44)
+                AvatarView(name: entry.name, avatarURL: entry.avatarURL, score: entry.score, size: rank == 1 ? 56 : 44)
             }
             .buttonStyle(.plain)
 
-            Text(entry.name)
-                .font(SMVFont.micro())
-                .foregroundStyle(.white)
-                .lineLimit(1)
+            // Name tap → user profile
+            Button {
+                router.push(.userProfile(userId: entry.userId))
+            } label: {
+                Text(entry.name)
+                    .font(SMVFont.micro())
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+            }
+            .buttonStyle(.plain)
 
             Text(entry.score.scoreFormatted)
                 .font(SMVFont.title())
@@ -194,18 +212,25 @@ struct LeaderboardView: View {
     }
 
     private func rankRow(_ entry: RankEntry, rank: Int) -> some View {
-        Button {
-            router.push(.userProfile(userId: entry.userId))
-        } label: {
-            HStack(spacing: SMVSpacing.md) {
-                Text("#\(rank)")
-                    .font(SMVFont.title())
-                    .fontDesign(.rounded)
-                    .foregroundStyle(Color.smvTextTertiary)
-                    .frame(width: 32, alignment: .leading)
+        HStack(spacing: SMVSpacing.md) {
+            Text("#\(rank)")
+                .font(SMVFont.title())
+                .fontDesign(.rounded)
+                .foregroundStyle(Color.smvTextTertiary)
+                .frame(width: 32, alignment: .leading)
 
-                AvatarView(name: entry.name, score: entry.score, size: 40)
+            // Avatar tap → scan gallery
+            Button {
+                router.present(.scanGallery(userId: entry.userId, displayName: entry.name))
+            } label: {
+                AvatarView(name: entry.name, avatarURL: entry.avatarURL, score: entry.score, size: 40)
+            }
+            .buttonStyle(.plain)
 
+            // Name tap → user profile
+            Button {
+                router.push(.userProfile(userId: entry.userId))
+            } label: {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(entry.name)
                         .font(SMVFont.title())
@@ -214,20 +239,20 @@ struct LeaderboardView: View {
                         .font(SMVFont.micro())
                         .foregroundStyle(Color.smvTextTertiary)
                 }
-
-                Spacer()
-
-                Text(entry.score.scoreFormatted)
-                    .font(SMVFont.headline())
-                    .foregroundStyle(.white)
             }
-            .padding(SMVSpacing.md)
-            .background(
-                RoundedRectangle(cornerRadius: SMVRadius.md)
-                    .fill(Color.smvSurface0)
-            )
+            .buttonStyle(.plain)
+
+            Spacer()
+
+            Text(entry.score.scoreFormatted)
+                .font(SMVFont.headline())
+                .foregroundStyle(.white)
         }
-        .buttonStyle(.plain)
+        .padding(SMVSpacing.md)
+        .background(
+            RoundedRectangle(cornerRadius: SMVRadius.md)
+                .fill(Color.smvSurface0)
+        )
     }
 
     // MARK: - Data
@@ -241,13 +266,18 @@ struct LeaderboardView: View {
             limit: 50
         )
 
+        let scoreField = selectedCategory.firestoreField
+
         entries = data.compactMap { item in
             guard let name = item["displayName"] as? String else { return nil }
+            // Use the category-specific best score for ranking
+            let score = item[scoreField] as? Double ?? item["bestScore"] as? Double ?? 0
             return RankEntry(
                 userId: item["id"] as? String ?? "",
                 name: name,
-                score: item["latestScore"] as? Double ?? item["bestScore"] as? Double ?? 0,
-                scanCount: item["scanCount"] as? Int ?? 0
+                score: score,
+                scanCount: item["scanCount"] as? Int ?? 0,
+                avatarURL: item["avatarURL"] as? String
             )
         }
 
@@ -263,6 +293,7 @@ struct RankEntry: Identifiable {
     let name: String
     let score: Double
     let scanCount: Int
+    let avatarURL: String?
 }
 
 // MARK: - Timeframe

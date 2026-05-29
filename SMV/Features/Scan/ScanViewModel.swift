@@ -287,7 +287,7 @@ final class ScanViewModel: NSObject, AVCapturePhotoCaptureDelegate {
 
             // Use the frontal result as the base (for sub-scores and categories),
             // but replace the overall score with the multi-angle combined score
-            if var baseResult = angleResults.first(where: { $0.position == .front })?.result
+            if let baseResult = angleResults.first(where: { $0.position == .front })?.result
                                 ?? angleResults.first?.result {
 
                 // Apply 3D depth metrics if available
@@ -316,20 +316,47 @@ final class ScanViewModel: NSObject, AVCapturePhotoCaptureDelegate {
                 // ── Cloud sync ──
                 if let firestore, let storage {
                     Task {
-                        // Upload all angle images
+                        // Save scan result first to get the Firestore document ID
+                        let firestoreDocId = await firestore.saveScanResult(userId: userId, result: baseResult)
+
+                        // Upload all angle images and collect URLs
+                        var imageURLs: [String: String] = [:]
                         for capture in captures {
                             if let imageData = capture.image.jpegData(compressionQuality: 0.7) {
-                                let suffix = capture.position == .front ? "" : "_\(capture.position)"
-                                let _ = await storage.uploadScanImage(
+                                let angleKey: String
+                                let urlFieldName: String
+                                switch capture.position {
+                                case .front:
+                                    angleKey = "front"
+                                    urlFieldName = "frontImageURL"
+                                case .left:
+                                    angleKey = "left"
+                                    urlFieldName = "leftImageURL"
+                                case .right:
+                                    angleKey = "right"
+                                    urlFieldName = "rightImageURL"
+                                case .up:
+                                    angleKey = "up"
+                                    urlFieldName = "upTiltImageURL"
+                                case .down:
+                                    angleKey = "down"
+                                    urlFieldName = "downTiltImageURL"
+                                }
+                                if let url = await storage.uploadScanAngleImage(
                                     userId: userId,
-                                    scanId: baseResult.id + suffix,
+                                    scanId: baseResult.id,
+                                    angle: angleKey,
                                     imageData: imageData
-                                )
+                                ) {
+                                    imageURLs[urlFieldName] = url
+                                }
                             }
                         }
 
-                        // Save scan result
-                        let _ = await firestore.saveScanResult(userId: userId, result: baseResult)
+                        // Save image URLs to the Firestore scan document
+                        if let docId = firestoreDocId, !imageURLs.isEmpty {
+                            await firestore.updateScanImageURLs(scanDocId: docId, urls: imageURLs)
+                        }
 
                         // Update user profile so they appear on leaderboard
                         let displayName = UserDefaults.standard.string(forKey: "smv_displayName") ?? "User"
@@ -349,7 +376,7 @@ final class ScanViewModel: NSObject, AVCapturePhotoCaptureDelegate {
         }
 
         // ── Fallback: single image analysis (no multi-angle captures) ──
-        if var result = await analysisService.analyze(image: image, userId: userId) {
+        if let result = await analysisService.analyze(image: image, userId: userId) {
             progressTask.cancel()
             withAnimation(.spring(duration: 0.3)) {
                 analysisProgress = 1.0
@@ -357,14 +384,20 @@ final class ScanViewModel: NSObject, AVCapturePhotoCaptureDelegate {
 
             if let firestore, let storage {
                 Task {
+                    // Save scan result first
+                    let firestoreDocId = await firestore.saveScanResult(userId: userId, result: result)
+
+                    // Upload front image and save URL
                     if let imageData = image.jpegData(compressionQuality: 0.7) {
-                        let _ = await storage.uploadScanImage(
+                        if let url = await storage.uploadScanAngleImage(
                             userId: userId,
                             scanId: result.id,
+                            angle: "front",
                             imageData: imageData
-                        )
+                        ), let docId = firestoreDocId {
+                            await firestore.updateScanImageURLs(scanDocId: docId, urls: ["frontImageURL": url])
+                        }
                     }
-                    let _ = await firestore.saveScanResult(userId: userId, result: result)
 
                     // Update user profile so they appear on leaderboard
                     let displayName = UserDefaults.standard.string(forKey: "smv_displayName") ?? "User"

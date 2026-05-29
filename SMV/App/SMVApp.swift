@@ -58,9 +58,6 @@ struct SMVApp: App {
             Challenge.self,
             Achievement.self,
             SMVNotification.self,
-            ForumCategory.self,
-            ForumThread.self,
-            ForumReply.self,
             Comment.self,
         ])
         let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)

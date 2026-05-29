@@ -74,7 +74,8 @@ final class AuthService {
             if let user {
                 self.displayName = user.displayName ?? defaults.string(forKey: "smv_displayName") ?? ""
                 self.email = user.email ?? ""
-                self.avatarURL = user.photoURL?.absoluteString
+                // Prefer our cached avatar URL (Storage), fall back to Auth photoURL
+                self.avatarURL = defaults.string(forKey: "smv_avatarURL") ?? user.photoURL?.absoluteString
                 self.state = .signedIn(userId: user.uid)
             } else {
                 self.state = .signedOut
@@ -178,6 +179,9 @@ final class AuthService {
                 try? await db.collection("users").document(userId).setData([
                     "displayName": resolvedName,
                     "email": email,
+                    "isProfilePublic": true,
+                    "followerCount": 0,
+                    "followingCount": 0,
                     "createdAt": FieldValue.serverTimestamp(),
                     "updatedAt": FieldValue.serverTimestamp(),
                 ], merge: true)
@@ -241,6 +245,9 @@ final class AuthService {
             let db = Firestore.firestore()
             try? await db.collection("users").document(userId).setData([
                 "displayName": name,
+                "isProfilePublic": true,
+                "followerCount": 0,
+                "followingCount": 0,
                 "createdAt": FieldValue.serverTimestamp(),
                 "updatedAt": FieldValue.serverTimestamp(),
             ], merge: true)
@@ -284,6 +291,7 @@ final class AuthService {
     func signOut() {
         do {
             try Auth.auth().signOut()
+            defaults.removeObject(forKey: "smv_avatarURL")
             displayName = ""
             email = ""
             avatarURL = nil
@@ -302,6 +310,7 @@ final class AuthService {
             try await Auth.auth().currentUser?.delete()
             defaults.removeObject(forKey: "smv_displayName")
             defaults.removeObject(forKey: "smv_handle")
+            defaults.removeObject(forKey: "smv_avatarURL")
             defaults.removeObject(forKey: kOnboarded)
             displayName = ""
             email = ""

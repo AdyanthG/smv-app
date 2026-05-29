@@ -300,11 +300,13 @@ final class FaceAnalysisService {
             proportionsScore * Weights.proportions +
             skinClarityScore * Weights.skinClarity
 
-        // ── Step 6: Apply bell curve + penalties ──
+        // ── Step 6: Apply bell curve + dampened penalties ──
         let bellCurved = applyBellCurve(rawScore: rawComposite)
-        let qualityAdjusted = bellCurved * quality.qualityMultiplier
-        let distortionAdjusted = qualityAdjusted * distortionPenalty
-        let finalScore = (distortionAdjusted * failoPenalty).smvClamped(to: 0.0...10.0)
+        // Dampen quality penalty: half-weight so bad lighting doesn't destroy the score
+        let qualityAdjusted = bellCurved * (0.5 + quality.qualityMultiplier * 0.5)
+        // Dampen distortion penalty similarly
+        let distortionAdjusted = qualityAdjusted * (0.6 + distortionPenalty * 0.4)
+        let finalScore = (distortionAdjusted * failoPenalty).smvClamped(to: 1.0...10.0)
 
         return FaceMetrics(
             quality: quality,
@@ -968,12 +970,12 @@ final class FaceAnalysisService {
     /// Uses steeper sigmoid so scores differentiate more clearly.
     /// Most people land 4-6. Attractive 6.5-8. Elite 8-9.5.
     private func applyBellCurve(rawScore: Double) -> Double {
-        // Slightly less aggressive sigmoid for better differentiation
-        let k = 0.50
+        // Steeper sigmoid for better differentiation at extremes
+        let k = 0.65
         let midpoint = 5.0
         let sigmoid = 1.0 / (1.0 + exp(-k * (rawScore - midpoint)))
-        // Map sigmoid (0-1) to score (1.0-10) with higher floor
-        return 1.0 + sigmoid * 9.0
+        // Map sigmoid (0-1) to score (2.0-9.5) — higher floor, realistic range
+        return 2.0 + sigmoid * 7.5
     }
 
     // MARK: - Geometry Helpers
