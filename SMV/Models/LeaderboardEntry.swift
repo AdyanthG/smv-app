@@ -69,6 +69,7 @@ enum LeaderboardCategory: String, Codable, CaseIterable {
     case proportions = "Proportions"
     case skinClarity = "Skin"
     case mostImproved = "Most Improved"
+    case mostVoted = "Most Voted"
 
     /// The Firestore field name used for ranking in this category
     var firestoreField: String {
@@ -81,15 +82,19 @@ enum LeaderboardCategory: String, Codable, CaseIterable {
         case .proportions:  return "bestProportionsScore"
         case .skinClarity:  return "bestSkinClarityScore"
         case .mostImproved: return "improvementRate"
+        case .mostVoted:    return "voteWins"
         }
     }
+
+    /// Categories whose value is a count/rate rather than a 0–10 score.
+    var isCountMetric: Bool { self == .mostVoted }
 
     /// The field on a *scan* document corresponding to this category. Used to
     /// find the specific scan that earned a user's rank (vs. the user aggregate
     /// `firestoreField`). Most Improved has no single scan → use overall best.
     var scanField: String {
         switch self {
-        case .global, .mostImproved: return "overallScore"
+        case .global, .mostImproved, .mostVoted: return "overallScore"
         case .eyeArea:               return "eyeAreaScore"
         case .jawline:               return "jawScore"
         case .symmetry:              return "symmetryScore"

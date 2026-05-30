@@ -512,6 +512,15 @@ final class FirestoreService {
         TimeZone(identifier: "America/New_York") ?? TimeZone(secondsFromGMT: -5 * 3600)!
     }
 
+    /// Read a Firestore numeric value as Double whether it's stored as a Double
+    /// or an Int (e.g. counters like voteWins use integer increments).
+    static func numericValue(_ any: Any?) -> Double {
+        if let d = any as? Double { return d }
+        if let i = any as? Int { return Double(i) }
+        if let n = any as? NSNumber { return n.doubleValue }
+        return 0
+    }
+
     /// EST-based cutoff for a timeframe. Returns nil for "All Time".
     private func cutoffDate(for timeframe: String) -> Date? {
         var estCalendar = Calendar.current
@@ -536,8 +545,9 @@ final class FirestoreService {
 
         // Timeframe-scoped leaderboards (Today / This Week) must rank by the best
         // *scan within that window*, not the user's all-time aggregate. Most
-        // Improved is inherently cumulative, so it stays on the aggregate path.
-        if let cutoff = cutoffDate(for: timeframe), cat != .mostImproved {
+        // Improved and Most Voted are inherently cumulative, so they always use
+        // the aggregate path.
+        if let cutoff = cutoffDate(for: timeframe), cat != .mostImproved, cat != .mostVoted {
             return await fetchTimeframeLeaderboard(scanField: cat.scanField, cutoff: cutoff, limit: limit)
         }
 
@@ -556,7 +566,9 @@ final class FirestoreService {
 
                 if data["isProfilePublic"] as? Bool == false { return nil }
 
-                let score = data[sortField] as? Double ?? 0
+                // Coerce the ranking value to Double (some fields, e.g. voteWins,
+                // are stored as integers).
+                let score = Self.numericValue(data[sortField])
                 if score <= 0 { return nil }
 
                 if isMostImproved {
@@ -568,7 +580,7 @@ final class FirestoreService {
                 data["leaderboardScore"] = score
                 return data
             }.sorted { a, b in
-                (a[sortField] as? Double ?? 0) > (b[sortField] as? Double ?? 0)
+                Self.numericValue(a[sortField]) > Self.numericValue(b[sortField])
             }
 
             return Array(results.prefix(limit)).enumerated().map { index, item in

@@ -145,6 +145,19 @@ struct LeaderboardView: View {
         }
     }
 
+    // MARK: - Display helpers
+
+    /// Score text per category — a win count for Most Voted, else a 0–10 score.
+    private func scoreText(_ entry: RankEntry) -> String {
+        selectedCategory.isCountMetric ? "\(Int(entry.score))" : entry.score.scoreFormatted
+    }
+
+    /// Tier ring score for the avatar — nil for count metrics so the ring stays
+    /// neutral instead of implying a 0–10 tier.
+    private func ringScore(_ entry: RankEntry) -> Double? {
+        selectedCategory.isCountMetric ? nil : entry.score
+    }
+
     // MARK: - Podium
 
     private var podiumSection: some View {
@@ -168,7 +181,7 @@ struct LeaderboardView: View {
             Button {
                 router.present(.scanGallery(userId: entry.userId, displayName: entry.name, scanId: entry.scanId, scoreField: selectedCategory.scanField))
             } label: {
-                AvatarView(name: entry.name, avatarURL: entry.avatarURL, score: entry.score, size: rank == 1 ? 56 : 44)
+                AvatarView(name: entry.name, avatarURL: entry.avatarURL, score: ringScore(entry), size: rank == 1 ? 56 : 44)
             }
             .buttonStyle(.plain)
 
@@ -183,7 +196,7 @@ struct LeaderboardView: View {
             }
             .buttonStyle(.plain)
 
-            Text(entry.score.scoreFormatted)
+            Text(scoreText(entry))
                 .font(SMVFont.title())
                 .foregroundStyle(.white)
 
@@ -223,7 +236,7 @@ struct LeaderboardView: View {
             Button {
                 router.present(.scanGallery(userId: entry.userId, displayName: entry.name, scanId: entry.scanId, scoreField: selectedCategory.scanField))
             } label: {
-                AvatarView(name: entry.name, avatarURL: entry.avatarURL, score: entry.score, size: 40)
+                AvatarView(name: entry.name, avatarURL: entry.avatarURL, score: ringScore(entry), size: 40)
             }
             .buttonStyle(.plain)
 
@@ -235,7 +248,7 @@ struct LeaderboardView: View {
                     Text(entry.name)
                         .font(SMVFont.title())
                         .foregroundStyle(.white)
-                    Text("\(entry.scanCount) scans")
+                    Text(selectedCategory.isCountMetric ? "\(scoreText(entry)) wins" : "\(entry.scanCount) scans")
                         .font(SMVFont.micro())
                         .foregroundStyle(Color.smvTextTertiary)
                 }
@@ -244,7 +257,7 @@ struct LeaderboardView: View {
 
             Spacer()
 
-            Text(entry.score.scoreFormatted)
+            Text(scoreText(entry))
                 .font(SMVFont.headline())
                 .foregroundStyle(.white)
         }

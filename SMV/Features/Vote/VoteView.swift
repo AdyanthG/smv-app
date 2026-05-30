@@ -22,8 +22,16 @@ struct VoteView: View {
     @State private var selectedSide: VoteSide?
     @State private var voteCount = 0
     @State private var showEmpty = false
+    @State private var myWins = 0
+    @State private var myLosses = 0
 
     enum VoteSide { case left, right }
+
+    private var myWinRate: Int {
+        let total = myWins + myLosses
+        guard total > 0 else { return 0 }
+        return Int((Double(myWins) / Double(total) * 100).rounded())
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -56,6 +64,7 @@ struct VoteView: View {
         .background(Color.smvBackground)
         .navigationBarHidden(true)
         .task {
+            await loadMyRecord()
             await loadPair()
         }
     }
@@ -143,17 +152,51 @@ struct VoteView: View {
 
             Spacer()
 
-            // Info
-            VStack(spacing: SMVSpacing.sm) {
+            // Your record + path to the Most Voted leaderboard (the goal loop)
+            VStack(spacing: SMVSpacing.md) {
                 Text("Tap the person you think looks better")
                     .font(SMVFont.micro())
                     .foregroundStyle(Color.smvTextTertiary)
-                Text("Votes influence leaderboard rankings")
+
+                Button {
+                    haptics.lightImpact()
+                    router.switchTab(.leaderboard)
+                } label: {
+                    HStack(spacing: SMVSpacing.lg) {
+                        recordStat(value: "\(myWins)", label: "Wins", color: .smvEmerald)
+                        Divider().frame(height: 28).overlay(Color.smvSurface2)
+                        recordStat(value: "\(myLosses)", label: "Losses", color: .smvPink)
+                        Divider().frame(height: 28).overlay(Color.smvSurface2)
+                        recordStat(value: "\(myWinRate)%", label: "Win Rate", color: .smvCyan)
+                    }
+                    .padding(.vertical, SMVSpacing.md)
+                    .padding(.horizontal, SMVSpacing.lg)
+                    .background(
+                        RoundedRectangle(cornerRadius: SMVRadius.md)
+                            .fill(Color.smvSurface0)
+                    )
+                }
+                .buttonStyle(.plain)
+
+                Text("Your record — climb the Most Voted leaderboard →")
                     .font(SMVFont.micro())
-                    .foregroundStyle(Color.smvTextTertiary.opacity(0.6))
+                    .foregroundStyle(Color.smvTextTertiary.opacity(0.7))
             }
+            .padding(.horizontal, SMVSpacing.lg)
             .padding(.bottom, 100)
         }
+    }
+
+    private func recordStat(value: String, label: String, color: Color) -> some View {
+        VStack(spacing: 2) {
+            Text(value)
+                .font(SMVFont.title())
+                .foregroundStyle(color)
+            Text(label)
+                .font(SMVFont.micro())
+                .foregroundStyle(Color.smvTextTertiary)
+        }
+        .frame(maxWidth: .infinity)
     }
 
     // MARK: - Vote Card
@@ -163,43 +206,34 @@ struct VoteView: View {
         let isWinner = isSelected
         let isLoser = selectedSide != nil && !isSelected
 
-        return VStack(spacing: SMVSpacing.md) {
-            // Avatar / Front scan image
-            ZStack {
-                Circle()
-                    .fill(Color.smvSurface2)
-                    .frame(width: 100, height: 100)
-                    .overlay(
-                        Circle()
-                            .stroke(
-                                isWinner ? Color.smvEmerald :
-                                isLoser ? Color.smvPink.opacity(0.5) :
-                                Color.smvSurface2,
-                                lineWidth: isWinner ? 3 : 1
-                            )
-                    )
+        // Prefer the actual scan face; fall back to profile photo, then initial.
+        let faceURL = candidate.frontImageURL ?? candidate.avatarURL
 
-                if let avatarURL = candidate.avatarURL, let url = URL(string: avatarURL) {
-                    AsyncImage(url: url) { phase in
-                        switch phase {
-                        case .success(let image):
-                            image
-                                .resizable()
-                                .scaledToFill()
-                                .frame(width: 96, height: 96)
-                                .clipShape(Circle())
-                        default:
-                            Text(candidate.name.prefix(1).uppercased())
-                                .font(SMVFont.displaySmall())
-                                .foregroundStyle(Color.smvCyan)
-                        }
+        return VStack(spacing: SMVSpacing.md) {
+            // Face being judged (front scan image)
+            Group {
+                if let urlStr = faceURL, let url = URL(string: urlStr) {
+                    CachedAsyncImage(url: url) { image in
+                        image.resizable().scaledToFill()
+                    } placeholder: {
+                        faceFallback(candidate)
                     }
                 } else {
-                    Text(candidate.name.prefix(1).uppercased())
-                        .font(SMVFont.displaySmall())
-                        .foregroundStyle(Color.smvCyan)
+                    faceFallback(candidate)
                 }
             }
+            .frame(maxWidth: .infinity)
+            .frame(height: 170)
+            .clipShape(RoundedRectangle(cornerRadius: SMVRadius.md))
+            .overlay(
+                RoundedRectangle(cornerRadius: SMVRadius.md)
+                    .stroke(
+                        isWinner ? Color.smvEmerald :
+                        isLoser ? Color.smvPink.opacity(0.5) :
+                        Color.white.opacity(0.06),
+                        lineWidth: isWinner ? 3 : 1
+                    )
+            )
 
             // Name
             Text(candidate.name)
@@ -277,6 +311,16 @@ struct VoteView: View {
         }
     }
 
+    private func faceFallback(_ candidate: VoteCandidate) -> some View {
+        Rectangle()
+            .fill(Color.smvSurface2)
+            .overlay(
+                Text(candidate.name.prefix(1).uppercased())
+                    .font(SMVFont.displayMedium())
+                    .foregroundStyle(Color.smvCyan)
+            )
+    }
+
     private func loadPair() async {
         isLoading = true
         let myId = auth.currentUserId ?? ""
@@ -284,24 +328,37 @@ struct VoteView: View {
         let (a, b) = await firestore.fetchVotePair(excludeUserId: myId)
 
         if let a, let b {
-            userA = VoteCandidate(
+            var candA = VoteCandidate(
                 userId: a["id"] as? String ?? "",
                 name: a["displayName"] as? String ?? "User",
                 score: a["latestScore"] as? Double ?? 0,
                 avatarURL: a["avatarURL"] as? String
             )
-            userB = VoteCandidate(
+            var candB = VoteCandidate(
                 userId: b["id"] as? String ?? "",
                 name: b["displayName"] as? String ?? "User",
                 score: b["latestScore"] as? Double ?? 0,
                 avatarURL: b["avatarURL"] as? String
             )
+            // Fetch each candidate's latest scan front image (the face to judge).
+            candA.frontImageURL = await firestore.fetchLatestScanImages(userId: candA.userId)["front"]
+            candB.frontImageURL = await firestore.fetchLatestScanImages(userId: candB.userId)["front"]
+            userA = candA
+            userB = candB
             showEmpty = false
         } else {
             showEmpty = true
         }
 
         isLoading = false
+    }
+
+    /// Load the signed-in user's win/loss record (how often others picked them).
+    private func loadMyRecord() async {
+        guard let myId = auth.currentUserId,
+              let data = await firestore.fetchUserProfile(userId: myId) else { return }
+        myWins = Int(FirestoreService.numericValue(data["voteWins"]))
+        myLosses = Int(FirestoreService.numericValue(data["voteLosses"]))
     }
 }
 
@@ -313,6 +370,7 @@ struct VoteCandidate: Identifiable {
     let name: String
     let score: Double
     let avatarURL: String?
+    var frontImageURL: String? = nil
 }
 
 #Preview {
