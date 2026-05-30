@@ -12,6 +12,7 @@ struct CreatePostView: View {
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
+    @Environment(Router.self) private var router
     @Environment(AuthService.self) private var auth
     @Environment(FirestoreService.self) private var firestore
     @Environment(HapticService.self) private var haptics
@@ -233,6 +234,9 @@ struct CreatePostView: View {
                 scoreChange: scoreChange,
                 isPublic: publicValue
             )
+
+            // Tell the feed to reload now that the post exists in Firestore.
+            router.refreshFeed()
         }
 
         dismiss()

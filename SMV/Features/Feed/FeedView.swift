@@ -89,6 +89,9 @@ struct FeedView: View {
         .onChange(of: selectedTab) {
             Task { await loadPosts() }
         }
+        .onChange(of: router.feedRefreshToken) {
+            Task { await loadPosts() }
+        }
         .alert("Thanks for the report", isPresented: Binding(
             get: { moderationMessage != nil },
             set: { if !$0 { moderationMessage = nil } }

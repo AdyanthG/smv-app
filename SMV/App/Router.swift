@@ -17,6 +17,10 @@ final class Router {
     var presentedSheet: Sheet?
     var presentedFullScreen: FullScreenDestination?
 
+    /// Bumped after a new post is created so the feed reloads to show it.
+    var feedRefreshToken: Int = 0
+    func refreshFeed() { feedRefreshToken += 1 }
+
     // ── Tabs ── (Feed → Ranks → [Scan] → Community → Profile)
 
     enum Tab: Int, CaseIterable, Identifiable {

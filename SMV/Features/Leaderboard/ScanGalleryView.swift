@@ -62,19 +62,17 @@ struct ScanGalleryView: View {
                                     .clipShape(RoundedRectangle(cornerRadius: SMVRadius.lg))
                                     .padding(.horizontal, SMVSpacing.md)
                             } else if let url = item.url {
-                                AsyncImage(url: url) { phase in
-                                    switch phase {
-                                    case .success(let image):
-                                        image
-                                            .resizable()
-                                            .scaledToFit()
-                                            .clipShape(RoundedRectangle(cornerRadius: SMVRadius.lg))
-                                    case .failure:
-                                        imagePlaceholder
-                                    default:
-                                        ProgressView()
-                                            .tint(Color.smvCyan)
-                                    }
+                                // CachedAsyncImage keys its load on the URL, so a
+                                // recycled TabView page reloads for its new angle
+                                // instead of showing the previous scan's image.
+                                CachedAsyncImage(url: url) { image in
+                                    image
+                                        .resizable()
+                                        .scaledToFit()
+                                        .clipShape(RoundedRectangle(cornerRadius: SMVRadius.lg))
+                                } placeholder: {
+                                    ProgressView()
+                                        .tint(Color.smvCyan)
                                 }
                                 .padding(.horizontal, SMVSpacing.md)
                             }

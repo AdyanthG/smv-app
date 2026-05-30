@@ -34,7 +34,6 @@ struct CachedAsyncImage<Content: View, Placeholder: View>: View {
     let placeholder: () -> Placeholder
 
     @State private var cachedImage: UIImage?
-    @State private var isLoading = false
 
     init(
         url: URL?,
@@ -52,38 +51,39 @@ struct CachedAsyncImage<Content: View, Placeholder: View>: View {
                 content(Image(uiImage: cachedImage))
             } else {
                 placeholder()
-                    .task(id: url) {
-                        await loadImage()
-                    }
             }
+        }
+        // Attach the loader to the always-present container and key it on the URL,
+        // so a recycled view reloads for its new URL instead of showing a stale
+        // image. `.task(id:)` cancels the prior load when the URL changes.
+        .task(id: url) {
+            await loadImage()
         }
     }
 
     private func loadImage() async {
-        guard let url, !isLoading else { return }
+        guard let url else {
+            cachedImage = nil
+            return
+        }
 
         let key = url.absoluteString
 
-        // Check cache first
+        // Cache hit → show immediately (no flash).
         if let cached = ImageCache.shared.image(for: key) {
             cachedImage = cached
             return
         }
 
-        isLoading = true
-
+        // Cache miss → clear any stale image (from a recycled view) and load.
+        cachedImage = nil
         do {
             let (data, _) = try await URLSession.shared.data(from: url)
-            if let image = UIImage(data: data) {
-                ImageCache.shared.setImage(image, for: key)
-                await MainActor.run {
-                    cachedImage = image
-                }
-            }
+            guard !Task.isCancelled, let image = UIImage(data: data) else { return }
+            ImageCache.shared.setImage(image, for: key)
+            cachedImage = image
         } catch {
-            // Silently fail — placeholder will remain
+            // Silently fail — placeholder remains.
         }
-
-        isLoading = false
     }
 }
