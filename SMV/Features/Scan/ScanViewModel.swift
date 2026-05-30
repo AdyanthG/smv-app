@@ -316,10 +316,9 @@ final class ScanViewModel: NSObject, AVCapturePhotoCaptureDelegate {
                 // ── Cloud sync ──
                 if let firestore, let storage {
                     Task {
-                        // Save scan result first (deterministic doc ID == baseResult.id)
-                        await firestore.saveScanResult(userId: userId, result: baseResult)
-
-                        // Upload all angle images and collect URLs
+                        // Upload all angle images FIRST and collect their URLs, so the
+                        // scan document can be created with the URLs in a single write.
+                        // (Scan docs are immutable — a later update is denied by rules.)
                         var imageURLs: [String: String] = [:]
                         for capture in captures {
                             if let imageData = capture.image.jpegData(compressionQuality: 0.7) {
@@ -353,10 +352,8 @@ final class ScanViewModel: NSObject, AVCapturePhotoCaptureDelegate {
                             }
                         }
 
-                        // Save image URLs to the Firestore scan document (same ID)
-                        if !imageURLs.isEmpty {
-                            await firestore.updateScanImageURLs(scanDocId: baseResult.id, urls: imageURLs)
-                        }
+                        // Save the scan document (deterministic ID) with image URLs included.
+                        await firestore.saveScanResult(userId: userId, result: baseResult, imageURLs: imageURLs)
 
                         // Update user profile so they appear on leaderboard
                         let displayName = UserDefaults.standard.string(forKey: "smv_displayName") ?? "User"
@@ -384,20 +381,19 @@ final class ScanViewModel: NSObject, AVCapturePhotoCaptureDelegate {
 
             if let firestore, let storage {
                 Task {
-                    // Save scan result first (deterministic doc ID == result.id)
-                    await firestore.saveScanResult(userId: userId, result: result)
-
-                    // Upload front image and save URL
-                    if let imageData = image.jpegData(compressionQuality: 0.7) {
-                        if let url = await storage.uploadScanAngleImage(
-                            userId: userId,
-                            scanId: result.id,
-                            angle: "front",
-                            imageData: imageData
-                        ) {
-                            await firestore.updateScanImageURLs(scanDocId: result.id, urls: ["frontImageURL": url])
-                        }
+                    // Upload the front image first, then create the scan doc with its URL.
+                    var imageURLs: [String: String] = [:]
+                    if let imageData = image.jpegData(compressionQuality: 0.7),
+                       let url = await storage.uploadScanAngleImage(
+                           userId: userId,
+                           scanId: result.id,
+                           angle: "front",
+                           imageData: imageData
+                       ) {
+                        imageURLs["frontImageURL"] = url
                     }
+
+                    await firestore.saveScanResult(userId: userId, result: result, imageURLs: imageURLs)
 
                     // Update user profile so they appear on leaderboard
                     let displayName = UserDefaults.standard.string(forKey: "smv_displayName") ?? "User"

@@ -187,15 +187,6 @@ final class FirestoreService {
         return scanId
     }
 
-    /// Update a scan document with image download URLs after storage upload
-    func updateScanImageURLs(scanDocId: String, urls: [String: String]) async {
-        do {
-            try await db.collection("scans").document(scanDocId).setData(urls, merge: true)
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
-
     /// Fetch all angle image URLs for a user's latest scan (for gallery view)
     func fetchScanGalleryURLs(userId: String) async -> [(angle: String, url: String)] {
         do {
