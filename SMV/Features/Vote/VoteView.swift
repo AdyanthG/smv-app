@@ -110,7 +110,14 @@ struct VoteView: View {
     // MARK: - Voting Content
 
     private func votingContent(a: VoteCandidate, b: VoteCandidate) -> some View {
-        VStack(spacing: SMVSpacing.lg) {
+        // The crowd favorite = whoever the public picks more often (if we have
+        // enough votes on both to compare).
+        let favoriteSide: VoteSide? = {
+            guard let ra = a.approvalPercent, let rb = b.approvalPercent, ra != rb else { return nil }
+            return ra > rb ? .left : .right
+        }()
+
+        return VStack(spacing: SMVSpacing.lg) {
             // Header
             Text("Who looks better?")
                 .font(SMVFont.headline())
@@ -119,17 +126,33 @@ struct VoteView: View {
 
             // VS Cards
             HStack(spacing: SMVSpacing.md) {
-                voteCard(candidate: a, side: .left)
+                voteCard(candidate: a, side: .left, isCrowdFavorite: favoriteSide == .left)
                     .onTapGesture { castVote(winner: .left) }
 
                 Text("VS")
                     .font(.system(size: 18, weight: .black, design: .rounded))
                     .foregroundStyle(Color.smvTextTertiary)
 
-                voteCard(candidate: b, side: .right)
+                voteCard(candidate: b, side: .right, isCrowdFavorite: favoriteSide == .right)
                     .onTapGesture { castVote(winner: .right) }
             }
             .padding(.horizontal, SMVSpacing.md)
+
+            // Verdict — how you compare to the crowd (after voting)
+            if let selected = selectedSide {
+                Group {
+                    if let fav = favoriteSide {
+                        if selected == fav {
+                            verdictBanner(text: "You're with the majority", icon: "flame.fill", color: .smvEmerald)
+                        } else {
+                            verdictBanner(text: "You went against the crowd", icon: "eye.fill", color: .smvViolet)
+                        }
+                    } else {
+                        verdictBanner(text: "Be one of the first to judge this matchup", icon: "sparkles", color: .smvCyan)
+                    }
+                }
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
 
             // Skip
             Button {
@@ -187,6 +210,17 @@ struct VoteView: View {
         }
     }
 
+    private func verdictBanner(text: String, icon: String, color: Color) -> some View {
+        HStack(spacing: SMVSpacing.sm) {
+            Image(systemName: icon).font(.system(size: 13))
+            Text(text).font(SMVFont.caption()).fontWeight(.semibold)
+        }
+        .foregroundStyle(color)
+        .padding(.horizontal, SMVSpacing.lg)
+        .padding(.vertical, SMVSpacing.sm)
+        .background(Capsule().fill(color.opacity(0.12)))
+    }
+
     private func recordStat(value: String, label: String, color: Color) -> some View {
         VStack(spacing: 2) {
             Text(value)
@@ -201,10 +235,11 @@ struct VoteView: View {
 
     // MARK: - Vote Card
 
-    private func voteCard(candidate: VoteCandidate, side: VoteSide) -> some View {
+    private func voteCard(candidate: VoteCandidate, side: VoteSide, isCrowdFavorite: Bool) -> some View {
         let isSelected = selectedSide == side
         let isWinner = isSelected
         let isLoser = selectedSide != nil && !isSelected
+        let revealed = selectedSide != nil
 
         // Prefer the actual scan face; fall back to profile photo, then initial.
         let faceURL = candidate.frontImageURL ?? candidate.avatarURL
@@ -252,19 +287,38 @@ struct VoteView: View {
                     Capsule().fill(tier.color.opacity(0.1))
                 )
 
-            // Vote result indicator
-            if isWinner {
-                HStack(spacing: 4) {
-                    Image(systemName: "crown.fill")
-                        .font(.system(size: 12))
-                    Text("Winner")
-                        .font(SMVFont.micro())
+            // Reveal: your pick + how the public votes on this person
+            if revealed {
+                VStack(spacing: 4) {
+                    if isWinner {
+                        HStack(spacing: 4) {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.system(size: 11))
+                            Text("Your pick")
+                                .font(SMVFont.micro())
+                        }
+                        .foregroundStyle(Color.smvEmerald)
+                    }
+
+                    if let pct = candidate.approvalPercent {
+                        Text("\(pct)% pick them")
+                            .font(SMVFont.caption())
+                            .fontWeight(.bold)
+                            .foregroundStyle(isCrowdFavorite ? Color.smvAmber : Color.smvTextSecondary)
+                        if isCrowdFavorite {
+                            HStack(spacing: 3) {
+                                Image(systemName: "crown.fill").font(.system(size: 9))
+                                Text("Crowd favorite").font(SMVFont.micro())
+                            }
+                            .foregroundStyle(Color.smvAmber)
+                        }
+                    } else {
+                        Text("New face")
+                            .font(SMVFont.micro())
+                            .foregroundStyle(Color.smvTextTertiary)
+                    }
                 }
-                .foregroundStyle(Color.smvEmerald)
-            } else if isLoser {
-                Text("—")
-                    .font(SMVFont.micro())
-                    .foregroundStyle(Color.smvTextTertiary)
+                .transition(.opacity)
             }
         }
         .frame(maxWidth: .infinity)
@@ -294,7 +348,7 @@ struct VoteView: View {
         guard let myId = auth.currentUserId else { return }
 
         haptics.success()
-        selectedSide = winner
+        withAnimation(.spring(duration: 0.3)) { selectedSide = winner }
 
         let winnerId = winner == .left ? a.userId : b.userId
         let loserId = winner == .left ? b.userId : a.userId
@@ -304,9 +358,9 @@ struct VoteView: View {
         Task {
             await firestore.recordVote(winnerId: winnerId, loserId: loserId, voterId: myId)
 
-            // Brief pause to show result, then load next pair
-            try? await Task.sleep(for: .seconds(0.8))
-            selectedSide = nil
+            // Hold on the crowd reveal long enough to read it, then load the next.
+            try? await Task.sleep(for: .seconds(2.6))
+            withAnimation { selectedSide = nil }
             await loadPair()
         }
     }
@@ -332,13 +386,17 @@ struct VoteView: View {
                 userId: a["id"] as? String ?? "",
                 name: a["displayName"] as? String ?? "User",
                 score: a["latestScore"] as? Double ?? 0,
-                avatarURL: a["avatarURL"] as? String
+                avatarURL: a["avatarURL"] as? String,
+                voteWins: Int(FirestoreService.numericValue(a["voteWins"])),
+                voteLosses: Int(FirestoreService.numericValue(a["voteLosses"]))
             )
             var candB = VoteCandidate(
                 userId: b["id"] as? String ?? "",
                 name: b["displayName"] as? String ?? "User",
                 score: b["latestScore"] as? Double ?? 0,
-                avatarURL: b["avatarURL"] as? String
+                avatarURL: b["avatarURL"] as? String,
+                voteWins: Int(FirestoreService.numericValue(b["voteWins"])),
+                voteLosses: Int(FirestoreService.numericValue(b["voteLosses"]))
             )
             // Fetch each candidate's latest scan front image (the face to judge).
             candA.frontImageURL = await firestore.fetchLatestScanImages(userId: candA.userId)["front"]
@@ -371,6 +429,17 @@ struct VoteCandidate: Identifiable {
     let score: Double
     let avatarURL: String?
     var frontImageURL: String? = nil
+    // The public's record for this person (excludes your current vote).
+    var voteWins: Int = 0
+    var voteLosses: Int = 0
+
+    var totalVotes: Int { voteWins + voteLosses }
+
+    /// Public approval (% of matchups they win). Nil until enough votes exist.
+    var approvalPercent: Int? {
+        guard totalVotes >= 3 else { return nil }
+        return Int((Double(voteWins) / Double(totalVotes) * 100).rounded())
+    }
 }
 
 #Preview {
