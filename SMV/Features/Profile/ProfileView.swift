@@ -13,8 +13,15 @@ struct ProfileView: View {
     @Environment(Router.self) private var router
     @Environment(AuthService.self) private var auth
     @Environment(FirestoreService.self) private var firestore
-    @Query(sort: \ScanResult.timestamp, order: .reverse) private var scans: [ScanResult]
+    @Query(sort: \ScanResult.timestamp, order: .reverse) private var allScans: [ScanResult]
     @State private var streak: Int = 0
+
+    /// Only the signed-in account's scans (the device can hold scans from
+    /// multiple anonymous sessions).
+    private var scans: [ScanResult] {
+        guard let uid = auth.currentUserId else { return allScans }
+        return allScans.filter { $0.userId == uid }
+    }
 
     var body: some View {
         VStack(spacing: 0) {

@@ -11,7 +11,13 @@ import SwiftData
 struct ScanHistoryView: View {
 
     @Environment(Router.self) private var router
-    @Query(sort: \ScanResult.timestamp, order: .reverse) private var scans: [ScanResult]
+    @Environment(AuthService.self) private var auth
+    @Query(sort: \ScanResult.timestamp, order: .reverse) private var allScans: [ScanResult]
+
+    private var scans: [ScanResult] {
+        guard let uid = auth.currentUserId else { return allScans }
+        return allScans.filter { $0.userId == uid }
+    }
 
     var body: some View {
         ScrollView {

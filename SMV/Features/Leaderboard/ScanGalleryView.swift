@@ -28,8 +28,12 @@ struct ScanGalleryView: View {
     @State private var currentIndex: Int = 0
     @State private var isLoading = true
 
-    // For own scans, try SwiftData first
-    @Query(sort: \ScanResult.timestamp, order: .reverse) private var scans: [ScanResult]
+    // For own scans, try SwiftData first (scoped to the profile's user)
+    @Query(sort: \ScanResult.timestamp, order: .reverse) private var allScans: [ScanResult]
+
+    private var scans: [ScanResult] {
+        allScans.filter { $0.userId == userId }
+    }
 
     var body: some View {
         ZStack {

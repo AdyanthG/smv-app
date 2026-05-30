@@ -256,7 +256,7 @@ struct UserProfileView: View {
                 // Load actual scans. For our own profile, prefer local SwiftData
                 // (always has image data); otherwise fetch from Firestore.
                 if isOwnProfile {
-                    scans = localScans.map { ProfileScan(scan: $0) }
+                    scans = localScans.filter { $0.userId == userId }.map { ProfileScan(scan: $0) }
                     scanCount = max(scanCount, scans.count)
                 } else if !isPrivate {
                     let raw = await firestore.fetchUserScans(userId: userId)

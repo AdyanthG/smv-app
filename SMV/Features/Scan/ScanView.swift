@@ -520,7 +520,6 @@ struct ScanView: View {
 
             GradientButton(title: "View Results", icon: "chart.bar.fill") {
                 haptics.success()
-                modelContext.insert(result)
                 router.push(.scanResults(scanId: result.id))
             }
             .padding(.horizontal, SMVSpacing.xxl)
@@ -531,6 +530,12 @@ struct ScanView: View {
             .padding(.horizontal, SMVSpacing.xxl)
 
             Spacer()
+        }
+        .onAppear {
+            // Persist the completed scan locally immediately, so it's never lost
+            // if the user taps "Scan Again" instead of "View Results". Re-inserting
+            // the same instance is a no-op.
+            modelContext.insert(result)
         }
     }
 

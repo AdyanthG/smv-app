@@ -15,12 +15,18 @@ struct CreatePostView: View {
     @Environment(AuthService.self) private var auth
     @Environment(FirestoreService.self) private var firestore
     @Environment(HapticService.self) private var haptics
-    @Query(sort: \ScanResult.timestamp, order: .reverse) private var scans: [ScanResult]
+    @Query(sort: \ScanResult.timestamp, order: .reverse) private var allScans: [ScanResult]
     @State private var caption: String = ""
     @State private var selectedHashtags: Set<String> = []
     @State private var attachScanResult: Bool = true
     @State private var isPublic: Bool = true
     @State private var isPosting = false
+
+    /// Only the current account's scans.
+    private var scans: [ScanResult] {
+        guard let uid = auth.currentUserId else { return allScans }
+        return allScans.filter { $0.userId == uid }
+    }
 
     private let suggestedHashtags = [
         "looksmaxxing", "glowup", "smvcheck", "mewing",
