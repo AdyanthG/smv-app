@@ -15,9 +15,11 @@ struct CreatePostView: View {
     @Environment(AuthService.self) private var auth
     @Environment(FirestoreService.self) private var firestore
     @Environment(HapticService.self) private var haptics
+    @Query(sort: \ScanResult.timestamp, order: .reverse) private var scans: [ScanResult]
     @State private var caption: String = ""
     @State private var selectedHashtags: Set<String> = []
     @State private var attachScanResult: Bool = true
+    @State private var isPublic: Bool = true
     @State private var isPosting = false
 
     private let suggestedHashtags = [
@@ -54,11 +56,37 @@ struct CreatePostView: View {
                     HStack {
                         Image(systemName: "viewfinder")
                             .foregroundStyle(Color.smvCyan)
-                        Text("Attach latest scan result")
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Attach latest scan result")
+                                .font(SMVFont.body())
+                                .foregroundStyle(.white)
+                            if attachScanResult && scans.isEmpty {
+                                Text("No scans yet to attach")
+                                    .font(SMVFont.micro())
+                                    .foregroundStyle(Color.smvTextTertiary)
+                            }
+                        }
+                        Spacer()
+                        Toggle("", isOn: $attachScanResult)
+                            .labelsHidden()
+                            .tint(Color.smvCyan)
+                            .disabled(scans.isEmpty)
+                    }
+                    .padding(SMVSpacing.md)
+                    .background(
+                        RoundedRectangle(cornerRadius: SMVRadius.sm)
+                            .fill(Color.smvSurface1)
+                    )
+
+                    // Visibility toggle
+                    HStack {
+                        Image(systemName: isPublic ? "globe" : "lock.fill")
+                            .foregroundStyle(Color.smvCyan)
+                        Text(isPublic ? "Public — visible in the feed" : "Private — only you")
                             .font(SMVFont.body())
                             .foregroundStyle(.white)
                         Spacer()
-                        Toggle("", isOn: $attachScanResult)
+                        Toggle("", isOn: $isPublic)
                             .labelsHidden()
                             .tint(Color.smvCyan)
                     }
@@ -148,25 +176,56 @@ struct CreatePostView: View {
         let userId = auth.currentUserId ?? "local_user"
         let name = auth.displayName.isEmpty ? "You" : auth.displayName
         let handle = UserDefaults.standard.string(forKey: "smv_handle") ?? "user"
+        let avatarURL = auth.avatarURL
 
-        // Save locally
+        // Resolve attached scan details from the latest local scan.
+        let attachedScan = attachScanResult ? scans.first : nil
+        let scanResultId = attachedScan?.id
+        let authorScore = attachedScan?.overallScore
+        let scoreChange: Double? = {
+            guard let latest = attachedScan, scans.count > 1 else { return nil }
+            return latest.overallScore - scans[1].overallScore
+        }()
+
+        // Save locally so it shows immediately in own-post views.
         let post = Post(
             authorId: userId,
             authorName: name,
             authorHandle: handle,
+            authorAvatarURL: avatarURL,
+            authorScore: authorScore,
             caption: caption,
-            hashtags: Array(selectedHashtags)
+            hashtags: Array(selectedHashtags),
+            scanResultId: scanResultId,
+            scoreChange: scoreChange,
+            isPublic: isPublic
         )
         modelContext.insert(post)
 
-        // Save to Firestore (fire-and-forget)
+        // Save to Firestore, resolving the scan's front image URL first.
+        let captionValue = caption
+        let hashtagsValue = Array(selectedHashtags)
+        let publicValue = isPublic
         Task {
+            var imageURL: String?
+            if scanResultId != nil {
+                imageURL = await firestore.fetchLatestScanImages(userId: userId)["front"]
+                if let imageURL {
+                    post.imageURL = imageURL
+                }
+            }
             let _ = await firestore.savePost(
                 authorId: userId,
                 authorName: name,
                 authorHandle: handle,
-                caption: caption,
-                hashtags: Array(selectedHashtags)
+                caption: captionValue,
+                hashtags: hashtagsValue,
+                scanResultId: scanResultId,
+                authorScore: authorScore,
+                authorAvatarURL: avatarURL,
+                imageURL: imageURL,
+                scoreChange: scoreChange,
+                isPublic: publicValue
             )
         }
 

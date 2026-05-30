@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import AuthenticationServices
 
 struct OnboardingView: View {
 
@@ -80,6 +81,36 @@ struct OnboardingView: View {
                     // CTA
                     if currentPage == pages.count - 1 {
                         VStack(spacing: SMVSpacing.md) {
+                            // Sign in with Apple (enabled once the capability is
+                            // provisioned — requires Apple Developer membership)
+                            if AuthService.appleSignInAvailable {
+                                SignInWithAppleButton(.signIn) { request in
+                                    request.requestedScopes = [.fullName, .email]
+                                    request.nonce = auth.prepareNonce()
+                                } onCompletion: { result in
+                                    haptics.success()
+                                    Task {
+                                        await auth.handleAppleSignIn(result: result)
+                                        if auth.currentUserId != nil {
+                                            auth.completeOnboarding()
+                                            router.dismiss()
+                                        }
+                                    }
+                                }
+                                .signInWithAppleButtonStyle(.white)
+                                .frame(height: 50)
+                                .clipShape(RoundedRectangle(cornerRadius: 12))
+
+                                HStack(spacing: SMVSpacing.sm) {
+                                    Rectangle().fill(Color.smvSurface2).frame(height: 1)
+                                    Text("or")
+                                        .font(SMVFont.micro())
+                                        .foregroundStyle(Color.smvTextTertiary)
+                                    Rectangle().fill(Color.smvSurface2).frame(height: 1)
+                                }
+                                .padding(.vertical, SMVSpacing.xs)
+                            }
+
                             // Name entry
                             TextField("Your name", text: $nameInput)
                                 .font(SMVFont.body())

@@ -43,6 +43,8 @@ struct MainTabView: View {
                             PrivacyPolicyView()
                         case .termsOfService:
                             TermsOfServiceView()
+                        case .communityGuidelines:
+                            CommunityGuidelinesView()
                         case .scanHistory:
                             ScanHistoryView()
                         case .scanDetail(_, let scanId):
@@ -64,24 +66,20 @@ struct MainTabView: View {
                 CreatePostView()
             case .paywall:
                 PaywallView()
-            case .scanOptions:
-                Text("Scan Options")
-            case .shareCard(let scanId):
-                Text("Share: \(scanId)")
-            case .scanGallery(let userId, let displayName):
-                ScanGalleryView(userId: userId, displayName: displayName)
+            case .scanGallery(let userId, let displayName, let scanId, let scoreField, let startIndex):
+                ScanGalleryView(
+                    userId: userId,
+                    displayName: displayName,
+                    scanId: scanId,
+                    scoreField: scoreField,
+                    startIndex: startIndex
+                )
             }
         }
         .fullScreenCover(item: $router.presentedFullScreen) { dest in
             switch dest {
             case .onboarding:
                 OnboardingView()
-            case .signIn:
-                Text("Sign In")
-            case .profileSetup:
-                Text("Profile Setup")
-            case .scanning:
-                ScanView()
             }
         }
     }

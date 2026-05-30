@@ -7,6 +7,7 @@
 
 import SwiftUI
 import SwiftData
+import FirebaseFirestore
 
 @Observable
 final class ResultsViewModel {
@@ -15,6 +16,10 @@ final class ResultsViewModel {
     var previousResult: ScanResult?
     var showShareSheet = false
     var shareImage: UIImage?
+
+    /// Angle image URLs for a scan loaded from Firestore (not in local storage).
+    /// Keyed by angle label: "Front", "Left", "Right", "Up", "Down".
+    var remoteAngleURLs: [String: String]?
 
     var scoreDelta: Double? {
         guard let current = result?.overallScore,
@@ -52,21 +57,83 @@ final class ResultsViewModel {
         return tips.map { ($0.0, $0.1, $0.2) }
     }
 
-    func loadResult(scanId: String, context: ModelContext) {
+    /// Load a scan for display. Tries local SwiftData first (own scans); if not
+    /// found, fetches it from Firestore (another user's scan) and builds an
+    /// in-memory result — it is intentionally NOT inserted into the model context.
+    func loadResult(scanId: String, context: ModelContext, firestore: FirestoreService) async {
         let descriptor = FetchDescriptor<ScanResult>(
             predicate: #Predicate { $0.id == scanId }
         )
-        result = try? context.fetch(descriptor).first
-
-        // Load previous result
-        if let userId = result?.userId {
-            let prevDescriptor = FetchDescriptor<ScanResult>(
-                predicate: #Predicate { $0.userId == userId },
-                sortBy: [SortDescriptor(\.timestamp, order: .reverse)]
-            )
-            let allResults = (try? context.fetch(prevDescriptor)) ?? []
-            previousResult = allResults.count > 1 ? allResults[1] : nil
+        if let local = try? context.fetch(descriptor).first {
+            result = local
+            loadPreviousResult(userId: local.userId, context: context)
+            return
         }
+
+        // Not local — fetch from Firestore (e.g. viewing another user's scan)
+        if let data = await firestore.fetchScan(scanId: scanId) {
+            result = Self.makeResult(scanId: scanId, data: data)
+            remoteAngleURLs = Self.angleURLs(from: data)
+        }
+    }
+
+    private func loadPreviousResult(userId: String, context: ModelContext) {
+        let prevDescriptor = FetchDescriptor<ScanResult>(
+            predicate: #Predicate { $0.userId == userId },
+            sortBy: [SortDescriptor(\.timestamp, order: .reverse)]
+        )
+        let allResults = (try? context.fetch(prevDescriptor)) ?? []
+        previousResult = allResults.count > 1 ? allResults[1] : nil
+    }
+
+    /// Build an in-memory ScanResult from a Firestore scan document.
+    private static func makeResult(scanId: String, data: [String: Any]) -> ScanResult {
+        func d(_ key: String, _ fallback: Double) -> Double { data[key] as? Double ?? fallback }
+
+        let result = ScanResult(
+            id: scanId,
+            userId: data["userId"] as? String ?? "",
+            timestamp: (data["timestamp"] as? Timestamp)?.dateValue() ?? .now,
+            overallScore: d("overallScore", 0),
+            eyeAreaScore: d("eyeAreaScore", 5),
+            jawScore: d("jawScore", 5),
+            symmetryScore: d("symmetryScore", 5),
+            harmonyScore: d("harmonyScore", 5),
+            proportionsScore: d("proportionsScore", 5),
+            skinClarityScore: d("skinClarityScore", 5),
+            jawlineScore: d("jawScore", 5),
+            fwhr: d("fwhr", 1.85),
+            canthalTiltDegrees: d("canthalTiltDegrees", 4),
+            gonialAngleDegrees: d("gonialAngleDegrees", 120),
+            facialThirdsDeviation: d("facialThirdsDeviation", 0.05),
+            ipdRatio: d("ipdRatio", 0.45),
+            eyeAspectRatio: d("eyeAspectRatio", 0.33),
+            noseWidthRatio: d("noseWidthRatio", 0.25),
+            lipRatio: d("lipRatio", 0.35),
+            philtrumRatio: d("philtrumRatio", 0.32),
+            rawSymmetry: d("rawSymmetry", 0.90),
+            failos: data["failos"] as? [String] ?? [],
+            failoPenalty: d("failoPenalty", 1.0)
+        )
+        // Treat as multi-angle if any profile angle URL is present.
+        result.isMultiAngleScan = data["leftImageURL"] != nil || data["rightImageURL"] != nil
+        return result
+    }
+
+    /// Extract angle label → URL map from a Firestore scan document.
+    private static func angleURLs(from data: [String: Any]) -> [String: String] {
+        let keys: [(String, String)] = [
+            ("Front", "frontImageURL"),
+            ("Left", "leftImageURL"),
+            ("Right", "rightImageURL"),
+            ("Up", "upTiltImageURL"),
+            ("Down", "downTiltImageURL"),
+        ]
+        var map: [String: String] = [:]
+        for (label, field) in keys {
+            if let url = data[field] as? String { map[label] = url }
+        }
+        return map
     }
 
     @MainActor

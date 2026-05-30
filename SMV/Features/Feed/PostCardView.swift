@@ -12,6 +12,9 @@ struct PostCardView: View {
     let post: Post
     var onLike: (() -> Void)? = nil
     var onComment: (() -> Void)? = nil
+    var onSave: (() -> Void)? = nil
+    var onReport: (() -> Void)? = nil
+    var onBlock: (() -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -42,31 +45,45 @@ struct PostCardView: View {
 
                 Spacer()
 
-                Button { } label: {
-                    Image(systemName: "ellipsis")
-                        .foregroundStyle(Color.smvTextTertiary)
+                if onReport != nil || onBlock != nil {
+                    Menu {
+                        if let onReport {
+                            Button(role: .destructive) { onReport() } label: {
+                                Label("Report Post", systemImage: "flag")
+                            }
+                        }
+                        if let onBlock {
+                            Button(role: .destructive) { onBlock() } label: {
+                                Label("Block \(post.authorName)", systemImage: "hand.raised")
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis")
+                            .foregroundStyle(Color.smvTextTertiary)
+                    }
+                    .buttonStyle(.plain)
                 }
             }
             .padding(SMVSpacing.lg)
 
-            // Image (placeholder gradient if no URL)
+            // Image (real image when available, gradient placeholder otherwise)
             if post.imageURL != nil || post.scanResultId != nil {
                 ZStack(alignment: .topTrailing) {
-                    // Placeholder image area
-                    Rectangle()
-                        .fill(
-                            LinearGradient(
-                                colors: [Color.smvSurface1, Color.smvSurface2],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
+                    if let urlStr = post.imageURL, let url = URL(string: urlStr) {
+                        CachedAsyncImage(url: url) { image in
+                            image
+                                .resizable()
+                                .scaledToFill()
+                        } placeholder: {
+                            imagePlaceholder
+                        }
+                        .frame(maxWidth: .infinity)
                         .frame(height: 300)
-                        .overlay(
-                            Image(systemName: "photo")
-                                .font(.system(size: 32))
-                                .foregroundStyle(Color.smvTextTertiary)
-                        )
+                        .clipped()
+                    } else {
+                        imagePlaceholder
+                            .frame(height: 300)
+                    }
 
                     // Score improvement badge
                     if let change = post.scoreChange, change != 0 {
@@ -132,14 +149,33 @@ struct PostCardView: View {
 
                 Spacer()
 
-                Button { } label: {
+                Button { onSave?() } label: {
                     Image(systemName: post.isSaved ? "bookmark.fill" : "bookmark")
                         .foregroundStyle(post.isSaved ? Color.smvAmber : Color.smvTextTertiary)
                 }
+                .buttonStyle(.plain)
             }
             .padding(SMVSpacing.lg)
         }
         .background(Color.smvSurface0)
+    }
+
+    private var imagePlaceholder: some View {
+        Rectangle()
+            .fill(
+                LinearGradient(
+                    colors: [Color.smvSurface1, Color.smvSurface2],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+            .frame(maxWidth: .infinity)
+            .frame(height: 300)
+            .overlay(
+                Image(systemName: "photo")
+                    .font(.system(size: 32))
+                    .foregroundStyle(Color.smvTextTertiary)
+            )
     }
 
     private func actionButton(icon: String, count: Int, color: Color, action: @escaping () -> Void) -> some View {

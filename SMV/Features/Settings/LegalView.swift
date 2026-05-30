@@ -81,6 +81,69 @@ struct PrivacyPolicyView: View {
     }
 }
 
+struct CommunityGuidelinesView: View {
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: SMVSpacing.xl) {
+                Text("These guidelines keep SMV safe and respectful. Violating them may result in content removal or account suspension.")
+                    .font(SMVFont.body())
+                    .foregroundStyle(Color.smvTextSecondary)
+                    .lineSpacing(4)
+
+                section("Be Respectful", content: """
+                • No harassment, bullying, or hate speech
+                • No discrimination based on race, gender, religion, or appearance
+                • Critique should be constructive, never cruel
+                """)
+
+                section("Protect Privacy", content: """
+                • Only upload photos of yourself
+                • Never post images of other people without their explicit consent
+                • Do not share anyone's personal information
+                """)
+
+                section("Keep It Authentic", content: """
+                • Do not impersonate others
+                • Do not manipulate or attempt to game scores or votes
+                • No spam, scams, or misleading content
+                """)
+
+                section("No Harmful Content", content: """
+                • No sexually explicit, violent, or graphic material
+                • No content promoting self-harm or eating disorders
+                • No illegal content of any kind
+                """)
+
+                section("Reporting", content: """
+                Tap the menu (•••) on any post to report it. We review every report and remove violating content. To report urgent safety concerns, contact support@smvapp.com.
+                """)
+
+                section("Enforcement", content: """
+                We may remove content, restrict features, or suspend accounts that violate these guidelines. Repeat or severe violations result in permanent bans.
+                """)
+            }
+            .padding(SMVSpacing.xxl)
+            .padding(.bottom, 100)
+        }
+        .background(Color.smvBackground)
+        .navigationTitle("Community Guidelines")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbarColorScheme(.dark, for: .navigationBar)
+    }
+
+    private func section(_ title: String, content: String) -> some View {
+        VStack(alignment: .leading, spacing: SMVSpacing.sm) {
+            Text(title)
+                .font(SMVFont.title())
+                .foregroundStyle(.white)
+            Text(.init(content))
+                .font(SMVFont.body())
+                .foregroundStyle(Color.smvTextSecondary)
+                .lineSpacing(4)
+        }
+    }
+}
+
 struct TermsOfServiceView: View {
     var body: some View {
         ScrollView {

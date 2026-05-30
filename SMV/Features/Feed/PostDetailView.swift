@@ -7,6 +7,7 @@
 
 import SwiftUI
 import SwiftData
+import FirebaseFirestore
 
 struct PostDetailView: View {
 
@@ -24,15 +25,21 @@ struct PostDetailView: View {
     @State private var commentText = ""
     @State private var isLiked = false
     @State private var likeCount = 0
+    @State private var remotePost: Post?
+    @State private var remoteComments: [Comment] = []
 
     private var post: Post? {
-        allPosts.first { $0.id == postId }
+        allPosts.first { $0.id == postId } ?? remotePost
     }
 
     private var comments: [Comment] {
-        allComments
-            .filter { $0.postId == postId }
-            .sorted { $0.createdAt < $1.createdAt }
+        let local = allComments.filter { $0.postId == postId }
+        // Merge remote + local, with local taking precedence on id collisions.
+        var byId: [String: Comment] = [:]
+        for comment in remoteComments + local {
+            byId[comment.id] = comment
+        }
+        return byId.values.sorted { $0.createdAt < $1.createdAt }
     }
 
     var body: some View {
@@ -95,12 +102,122 @@ struct PostDetailView: View {
         .navigationTitle("Post")
         .navigationBarTitleDisplayMode(.inline)
         .toolbarColorScheme(.dark, for: .navigationBar)
-        .onAppear {
-            if let post {
-                isLiked = post.isLiked
-                likeCount = post.likeCount
+        .toolbar {
+            if let post, post.authorId != auth.currentUserId {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        Button(role: .destructive) { reportPost(post) } label: {
+                            Label("Report Post", systemImage: "flag")
+                        }
+                        Button(role: .destructive) { blockAuthor(post) } label: {
+                            Label("Block \(post.authorName)", systemImage: "hand.raised")
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis")
+                            .foregroundStyle(Color.smvTextSecondary)
+                    }
+                }
             }
         }
+        .task {
+            await loadPost()
+        }
+    }
+
+    // MARK: - Moderation
+
+    private func reportPost(_ post: Post) {
+        guard let userId = auth.currentUserId else { return }
+        haptics.mediumImpact()
+        Task {
+            await firestore.reportPost(
+                postId: post.id,
+                authorId: post.authorId,
+                reporterId: userId,
+                reason: "user_report"
+            )
+        }
+        router.pop()
+    }
+
+    private func blockAuthor(_ post: Post) {
+        guard let userId = auth.currentUserId else { return }
+        haptics.mediumImpact()
+        Task { await firestore.blockUser(userId: userId, blockedId: post.authorId) }
+        router.pop()
+    }
+
+    // MARK: - Loading
+
+    private func loadPost() async {
+        // Fetch the post from Firestore if it isn't in local storage.
+        if post == nil, let data = await firestore.fetchPost(postId: postId) {
+            remotePost = Self.makePost(from: data)
+        }
+
+        // Seed engagement counts from whichever post we resolved.
+        if let post {
+            likeCount = post.likeCount
+            isLiked = post.isLiked
+        }
+
+        // Resolve the viewer's like state from Firestore.
+        if let userId = auth.currentUserId {
+            let liked = await firestore.isPostLiked(postId: postId, userId: userId)
+            isLiked = liked
+            post?.isLiked = liked
+        }
+
+        // Load comments from Firestore (merged with any local ones).
+        let raw = await firestore.fetchComments(postId: postId)
+        remoteComments = raw.compactMap { Self.makeComment(from: $0) }
+
+        // Keep the post's comment count consistent with what we loaded.
+        if let post, comments.count > post.commentCount {
+            post.commentCount = comments.count
+        }
+    }
+
+    private static func makePost(from data: [String: Any]) -> Post? {
+        guard let authorId = data["authorId"] as? String,
+              let authorName = data["authorName"] as? String,
+              let authorHandle = data["authorHandle"] as? String else {
+            return nil
+        }
+        return Post(
+            id: data["id"] as? String ?? UUID().uuidString,
+            authorId: authorId,
+            authorName: authorName,
+            authorHandle: authorHandle,
+            authorAvatarURL: data["authorAvatarURL"] as? String,
+            authorScore: data["authorScore"] as? Double,
+            imageURL: data["imageURL"] as? String,
+            caption: data["caption"] as? String ?? "",
+            hashtags: data["hashtags"] as? [String] ?? [],
+            likeCount: data["likeCount"] as? Int ?? 0,
+            commentCount: data["commentCount"] as? Int ?? 0,
+            createdAt: (data["createdAt"] as? Timestamp)?.dateValue() ?? .now,
+            scanResultId: data["scanResultId"] as? String,
+            scoreChange: data["scoreChange"] as? Double,
+            isPublic: data["isPublic"] as? Bool ?? true
+        )
+    }
+
+    private static func makeComment(from data: [String: Any]) -> Comment? {
+        guard let id = data["id"] as? String,
+              let authorId = data["authorId"] as? String,
+              let body = data["body"] as? String else {
+            return nil
+        }
+        return Comment(
+            id: id,
+            postId: data["postId"] as? String ?? "",
+            authorId: authorId,
+            authorName: data["authorName"] as? String ?? "User",
+            authorHandle: data["authorHandle"] as? String ?? "",
+            body: body,
+            createdAt: (data["createdAt"] as? Timestamp)?.dateValue() ?? .now
+        )
     }
 
     // MARK: - Post Content
@@ -131,6 +248,24 @@ struct PostDetailView: View {
                 }
 
                 Spacer()
+            }
+
+            // Scan image
+            if let urlStr = post.imageURL, let url = URL(string: urlStr) {
+                CachedAsyncImage(url: url) { image in
+                    image
+                        .resizable()
+                        .scaledToFill()
+                } placeholder: {
+                    RoundedRectangle(cornerRadius: SMVRadius.md)
+                        .fill(Color.smvSurface1)
+                        .frame(height: 280)
+                        .overlay(ProgressView().tint(Color.smvCyan))
+                }
+                .frame(maxWidth: .infinity)
+                .frame(height: 320)
+                .clipped()
+                .clipShape(RoundedRectangle(cornerRadius: SMVRadius.md))
             }
 
             // Caption

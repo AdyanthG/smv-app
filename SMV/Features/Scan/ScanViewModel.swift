@@ -316,8 +316,8 @@ final class ScanViewModel: NSObject, AVCapturePhotoCaptureDelegate {
                 // ── Cloud sync ──
                 if let firestore, let storage {
                     Task {
-                        // Save scan result first to get the Firestore document ID
-                        let firestoreDocId = await firestore.saveScanResult(userId: userId, result: baseResult)
+                        // Save scan result first (deterministic doc ID == baseResult.id)
+                        await firestore.saveScanResult(userId: userId, result: baseResult)
 
                         // Upload all angle images and collect URLs
                         var imageURLs: [String: String] = [:]
@@ -353,9 +353,9 @@ final class ScanViewModel: NSObject, AVCapturePhotoCaptureDelegate {
                             }
                         }
 
-                        // Save image URLs to the Firestore scan document
-                        if let docId = firestoreDocId, !imageURLs.isEmpty {
-                            await firestore.updateScanImageURLs(scanDocId: docId, urls: imageURLs)
+                        // Save image URLs to the Firestore scan document (same ID)
+                        if !imageURLs.isEmpty {
+                            await firestore.updateScanImageURLs(scanDocId: baseResult.id, urls: imageURLs)
                         }
 
                         // Update user profile so they appear on leaderboard
@@ -384,8 +384,8 @@ final class ScanViewModel: NSObject, AVCapturePhotoCaptureDelegate {
 
             if let firestore, let storage {
                 Task {
-                    // Save scan result first
-                    let firestoreDocId = await firestore.saveScanResult(userId: userId, result: result)
+                    // Save scan result first (deterministic doc ID == result.id)
+                    await firestore.saveScanResult(userId: userId, result: result)
 
                     // Upload front image and save URL
                     if let imageData = image.jpegData(compressionQuality: 0.7) {
@@ -394,8 +394,8 @@ final class ScanViewModel: NSObject, AVCapturePhotoCaptureDelegate {
                             scanId: result.id,
                             angle: "front",
                             imageData: imageData
-                        ), let docId = firestoreDocId {
-                            await firestore.updateScanImageURLs(scanDocId: docId, urls: ["frontImageURL": url])
+                        ) {
+                            await firestore.updateScanImageURLs(scanDocId: result.id, urls: ["frontImageURL": url])
                         }
                     }
 

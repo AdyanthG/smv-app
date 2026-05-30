@@ -11,9 +11,10 @@ service firebase.storage {
         && request.resource.size < 10 * 1024 * 1024  // 10MB max
         && request.resource.contentType.matches('image/.*');
 
-      // Only the owner can read their scans
-      allow read: if request.auth != null
-        && request.auth.uid == userId;
+      // Any signed-in user can read scan images (needed for leaderboard,
+      // public profiles, feed, and voting). Up/Down angle privacy is enforced
+      // in-app, not at the storage layer.
+      allow read: if request.auth != null;
     }
 
     // ── Profile Photos ──

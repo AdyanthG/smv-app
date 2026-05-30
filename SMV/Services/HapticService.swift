@@ -10,19 +10,30 @@ import UIKit
 @Observable
 final class HapticService {
 
+    /// User preference (Settings → Haptic Feedback). Defaults to enabled.
+    static let prefKey = "smv_hapticsEnabled"
+    private var isEnabled: Bool {
+        UserDefaults.standard.object(forKey: Self.prefKey) == nil
+            ? true
+            : UserDefaults.standard.bool(forKey: Self.prefKey)
+    }
+
     // MARK: - Impact
 
     func lightImpact() {
+        guard isEnabled else { return }
         let generator = UIImpactFeedbackGenerator(style: .light)
         generator.impactOccurred()
     }
 
     func mediumImpact() {
+        guard isEnabled else { return }
         let generator = UIImpactFeedbackGenerator(style: .medium)
         generator.impactOccurred()
     }
 
     func heavyImpact() {
+        guard isEnabled else { return }
         let generator = UIImpactFeedbackGenerator(style: .heavy)
         generator.impactOccurred()
     }
@@ -30,16 +41,19 @@ final class HapticService {
     // MARK: - Notification
 
     func success() {
+        guard isEnabled else { return }
         let generator = UINotificationFeedbackGenerator()
         generator.notificationOccurred(.success)
     }
 
     func warning() {
+        guard isEnabled else { return }
         let generator = UINotificationFeedbackGenerator()
         generator.notificationOccurred(.warning)
     }
 
     func error() {
+        guard isEnabled else { return }
         let generator = UINotificationFeedbackGenerator()
         generator.notificationOccurred(.error)
     }
@@ -47,6 +61,7 @@ final class HapticService {
     // MARK: - Selection
 
     func selection() {
+        guard isEnabled else { return }
         let generator = UISelectionFeedbackGenerator()
         generator.selectionChanged()
     }

@@ -63,6 +63,7 @@ final class Router {
         case referrals
         case privacyPolicy
         case termsOfService
+        case communityGuidelines
         case scanHistory
         case scanDetail(userId: String, scanId: String)
     }
@@ -72,17 +73,14 @@ final class Router {
     enum Sheet: Identifiable {
         case createPost
         case paywall
-        case scanOptions
-        case shareCard(scanId: String)
-        case scanGallery(userId: String, displayName: String)
+        case scanGallery(userId: String, displayName: String, scanId: String? = nil, scoreField: String? = nil, startIndex: Int = 0)
 
         var id: String {
             switch self {
             case .createPost:              return "createPost"
             case .paywall:                 return "paywall"
-            case .scanOptions:             return "scanOptions"
-            case .shareCard(let id):       return "shareCard_\(id)"
-            case .scanGallery(let id, _):  return "scanGallery_\(id)"
+            case .scanGallery(let userId, _, let scanId, let scoreField, _):
+                return "scanGallery_\(userId)_\(scanId ?? scoreField ?? "latest")"
             }
         }
     }
@@ -91,16 +89,10 @@ final class Router {
 
     enum FullScreenDestination: Identifiable {
         case onboarding
-        case signIn
-        case profileSetup
-        case scanning
 
         var id: String {
             switch self {
             case .onboarding:   return "onboarding"
-            case .signIn:       return "signIn"
-            case .profileSetup: return "profileSetup"
-            case .scanning:     return "scanning"
             }
         }
     }

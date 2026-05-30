@@ -22,6 +22,7 @@ struct EditProfileView: View {
     @State private var isSaving = false
     @State private var selectedPhotoItem: PhotosPickerItem?
     @State private var selectedPhotoData: Data?
+    @State private var handleError: String?
 
     enum Gender: String, CaseIterable {
         case male = "Male"
@@ -96,6 +97,12 @@ struct EditProfileView: View {
                 VStack(spacing: SMVSpacing.lg) {
                     fieldRow(title: "Display Name", text: $displayName, placeholder: "Your name")
                     fieldRow(title: "Handle", text: $handle, placeholder: "username")
+                    if let handleError {
+                        Text(handleError)
+                            .font(SMVFont.micro())
+                            .foregroundStyle(Color.smvPink)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                     bioRow(title: "Bio", text: $bio, placeholder: "Tell us about your journey")
 
                     // Gender picker
@@ -200,30 +207,38 @@ struct EditProfileView: View {
 
     private func save() {
         isSaving = true
+        handleError = nil
         haptics.mediumImpact()
 
-        // Save locally
+        let userId = auth.currentUserId
+        let trimmedHandle = handle.trimmingCharacters(in: .whitespaces)
         let defaults = UserDefaults.standard
-        defaults.set(displayName, forKey: "smv_displayName")
-        defaults.set(handle, forKey: "smv_handle")
-        defaults.set(bio, forKey: "smv_bio")
-        defaults.set(selectedGender.rawValue, forKey: "smv_gender")
 
-        // Update AuthService display name
-        auth.completeProfileSetup(name: displayName, handle: handle)
+        Task {
+            // Enforce handle uniqueness before persisting anything.
+            if let userId, !trimmedHandle.isEmpty {
+                let available = await firestore.isHandleAvailable(trimmedHandle, excludingUserId: userId)
+                if !available {
+                    handleError = "@\(trimmedHandle) is already taken"
+                    haptics.error()
+                    isSaving = false
+                    return
+                }
+            }
 
-        // Sync to Firestore
-        if let userId = auth.currentUserId {
-            Task {
-                // Upload profile photo if selected
+            // Persist locally
+            defaults.set(displayName, forKey: "smv_displayName")
+            defaults.set(trimmedHandle, forKey: "smv_handle")
+            defaults.set(bio, forKey: "smv_bio")
+            defaults.set(selectedGender.rawValue, forKey: "smv_gender")
+            auth.completeProfileSetup(name: displayName, handle: trimmedHandle)
+
+            // Sync to Firestore
+            if let userId {
                 var uploadedAvatarURL: String?
                 if let photoData = selectedPhotoData {
-                    uploadedAvatarURL = await storage.uploadProfilePhoto(
-                        userId: userId,
-                        imageData: photoData
-                    )
+                    uploadedAvatarURL = await storage.uploadProfilePhoto(userId: userId, imageData: photoData)
                     if let url = uploadedAvatarURL {
-                        // Cache avatar URL locally and in AuthService
                         defaults.set(url, forKey: "smv_avatarURL")
                         auth.avatarURL = url
                     }
@@ -232,15 +247,13 @@ struct EditProfileView: View {
                 await firestore.saveUserProfile(
                     userId: userId,
                     displayName: displayName,
-                    handle: handle,
+                    handle: trimmedHandle,
                     bio: bio,
                     gender: selectedGender.rawValue,
                     avatarURL: uploadedAvatarURL
                 )
-                isSaving = false
-                dismiss()
             }
-        } else {
+
             isSaving = false
             dismiss()
         }

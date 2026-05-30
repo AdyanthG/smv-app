@@ -16,6 +16,7 @@ struct ResultsView: View {
     @Environment(Router.self) private var router
     @Environment(AuthService.self) private var auth
     @Environment(HapticService.self) private var haptics
+    @Environment(FirestoreService.self) private var firestore
 
     var body: some View {
         ScrollView {
@@ -24,10 +25,10 @@ struct ResultsView: View {
                     // Score Ring
                     scoreSection(result)
 
-                    // Angle Frames (if multi-angle scan)
-                    if result.isMultiAngleScan {
-                        let isOwner = result.userId == auth.currentUserId
-                        angleFramesSection(result, showAllAngles: isOwner)
+                    // Angle Frames — all available angles, visible to everyone
+                    let angles = availableAngles(result)
+                    if !angles.isEmpty {
+                        angleFramesSection(angles)
                     }
 
                     // Radar Chart
@@ -58,8 +59,8 @@ struct ResultsView: View {
         .navigationTitle("Results")
         .navigationBarTitleDisplayMode(.inline)
         .toolbarColorScheme(.dark, for: .navigationBar)
-        .onAppear {
-            viewModel.loadResult(scanId: scanId, context: modelContext)
+        .task {
+            await viewModel.loadResult(scanId: scanId, context: modelContext, firestore: firestore)
             haptics.scoreReveal()
         }
         .sheet(isPresented: $viewModel.showShareSheet) {
@@ -101,7 +102,20 @@ struct ResultsView: View {
     }
     // MARK: - Angle Frames
 
-    private func angleFramesSection(_ result: ScanResult, showAllAngles: Bool) -> some View {
+    /// Canonical angle ordering, filtered to angles that actually have an image
+    /// (local data or remote URL). All 5 angles are visible to every viewer.
+    private func availableAngles(_ result: ScanResult) -> [ScanAngle] {
+        let all: [ScanAngle] = [
+            ScanAngle(label: "Front", data: result.imageData, index: 0),
+            ScanAngle(label: "Left", data: result.leftImageData, index: 1),
+            ScanAngle(label: "Right", data: result.rightImageData, index: 2),
+            ScanAngle(label: "Up", data: result.upImageData, index: 3),
+            ScanAngle(label: "Down", data: result.downImageData, index: 4),
+        ]
+        return all.filter { $0.data != nil || remoteAngleURL($0.label) != nil }
+    }
+
+    private func angleFramesSection(_ angles: [ScanAngle]) -> some View {
         VStack(alignment: .leading, spacing: SMVSpacing.md) {
             Text("Scan Angles")
                 .font(SMVFont.title())
@@ -109,15 +123,18 @@ struct ResultsView: View {
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: SMVSpacing.sm) {
-                    // Public angles: Front, Left, Right (always shown)
-                    angleFrame(label: "Front", data: result.imageData)
-                    angleFrame(label: "Left", data: result.leftImageData)
-                    angleFrame(label: "Right", data: result.rightImageData)
-
-                    // Private angles: Up, Down (owner only)
-                    if showAllAngles {
-                        angleFrame(label: "Up", data: result.upImageData)
-                        angleFrame(label: "Down", data: result.downImageData)
+                    ForEach(angles) { angle in
+                        Button {
+                            router.present(.scanGallery(
+                                userId: viewModel.result?.userId ?? "",
+                                displayName: "Scan Angles",
+                                scanId: scanId,
+                                startIndex: angle.index
+                            ))
+                        } label: {
+                            angleFrame(label: angle.label, data: angle.data)
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
             }
@@ -126,26 +143,43 @@ struct ResultsView: View {
 
     private func angleFrame(label: String, data: Data?) -> some View {
         VStack(spacing: SMVSpacing.xs) {
-            if let data, let uiImage = UIImage(data: data) {
-                Image(uiImage: uiImage)
-                    .resizable()
-                    .scaledToFill()
-                    .frame(width: 80, height: 100)
-                    .clipShape(RoundedRectangle(cornerRadius: SMVRadius.sm))
-            } else {
-                RoundedRectangle(cornerRadius: SMVRadius.sm)
-                    .fill(Color.smvSurface1)
-                    .frame(width: 80, height: 100)
-                    .overlay(
-                        Image(systemName: "person.fill")
-                            .font(.system(size: 20))
-                            .foregroundStyle(Color.smvTextTertiary)
-                    )
+            Group {
+                if let data, let uiImage = UIImage(data: data) {
+                    Image(uiImage: uiImage)
+                        .resizable()
+                        .scaledToFill()
+                } else if let url = remoteAngleURL(label) {
+                    CachedAsyncImage(url: url) { image in
+                        image.resizable().scaledToFill()
+                    } placeholder: {
+                        angleFramePlaceholder
+                    }
+                } else {
+                    angleFramePlaceholder
+                }
             }
+            .frame(width: 80, height: 100)
+            .clipShape(RoundedRectangle(cornerRadius: SMVRadius.sm))
+
             Text(label)
                 .font(SMVFont.micro())
                 .foregroundStyle(Color.smvTextSecondary)
         }
+    }
+
+    private var angleFramePlaceholder: some View {
+        RoundedRectangle(cornerRadius: SMVRadius.sm)
+            .fill(Color.smvSurface1)
+            .overlay(
+                Image(systemName: "person.fill")
+                    .font(.system(size: 20))
+                    .foregroundStyle(Color.smvTextTertiary)
+            )
+    }
+
+    private func remoteAngleURL(_ label: String) -> URL? {
+        guard let urlStr = viewModel.remoteAngleURLs?[label] else { return nil }
+        return URL(string: urlStr)
     }
 
     // MARK: - Radar
@@ -268,6 +302,15 @@ struct ResultsView: View {
     }
 }
 
+// MARK: - Scan Angle
+
+private struct ScanAngle: Identifiable {
+    let label: String
+    let data: Data?
+    let index: Int
+    var id: String { label }
+}
+
 // MARK: - Share Sheet
 
 struct ShareSheet: UIViewControllerRepresentable {
@@ -286,4 +329,6 @@ struct ShareSheet: UIViewControllerRepresentable {
     }
     .environment(Router())
     .environment(HapticService())
+    .environment(AuthService())
+    .environment(FirestoreService())
 }

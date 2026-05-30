@@ -38,6 +38,27 @@ service cloud.firestore {
         // Followers are written by the follower (via batch), so check the follower
         allow create, delete: if isSignedIn() && request.auth.uid == followerId;
       }
+
+      // ── Saved posts (bookmarks) subcollection ──
+      match /saved/{postId} {
+        // Only the owner can read or modify their own saved posts
+        allow read, create, delete: if isOwner(userId);
+      }
+
+      // ── Blocked users subcollection ──
+      match /blocked/{blockedId} {
+        // Only the owner can see or manage who they've blocked
+        allow read, create, delete: if isOwner(userId);
+      }
+    }
+
+    // ── Reports Collection (content moderation) ──
+    match /reports/{reportId} {
+      // Any signed-in user can file a report; only the reporter is recorded.
+      allow create: if isSignedIn()
+        && request.resource.data.reporterId == request.auth.uid;
+      // Reports are reviewed server-side; clients cannot read or modify them.
+      allow read, update, delete: if false;
     }
 
     // ── Scans Collection ──
@@ -48,8 +69,9 @@ service cloud.firestore {
       // Users can create scans for themselves
       allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
 
-      // No update/delete (scan results are immutable)
-      allow update, delete: if false;
+      // Scan results are immutable, but the owner may delete them (account deletion)
+      allow update: if false;
+      allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
     }
 
     // ── Posts Collection ──

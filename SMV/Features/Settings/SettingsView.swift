@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import SwiftData
 
 struct SettingsView: View {
 
@@ -13,11 +14,22 @@ struct SettingsView: View {
     @Environment(Router.self) private var router
     @Environment(HapticService.self) private var haptics
     @Environment(FirestoreService.self) private var firestore
+    @Environment(SubscriptionManager.self) private var subscriptions
+    @Environment(\.modelContext) private var modelContext
+    @Environment(\.openURL) private var openURL
     @State private var showDeleteConfirmation = false
     @State private var showSignOutConfirmation = false
+    @State private var isDeleting = false
     @State private var notificationsEnabled = true
     @State private var hapticFeedback = true
     @State private var isProfilePublic = true
+    @State private var didLoadPrivacy = false
+
+    private var appVersion: String {
+        let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
+        let b = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1"
+        return "\(v) (\(b))"
+    }
 
     var body: some View {
         List {
@@ -60,6 +72,8 @@ struct SettingsView: View {
                 }
                 .tint(Color.smvCyan)
                 .onChange(of: isProfilePublic) { _, newValue in
+                    // Ignore the change that comes from loading the current value.
+                    guard didLoadPrivacy else { return }
                     if let userId = auth.currentUserId {
                         Task { await firestore.setProfilePublic(userId: userId, isPublic: newValue) }
                     }
@@ -76,12 +90,19 @@ struct SettingsView: View {
                         .foregroundStyle(.white)
                 }
                 .tint(Color.smvCyan)
+                .onChange(of: notificationsEnabled) { _, newValue in
+                    UserDefaults.standard.set(newValue, forKey: "smv_notificationsEnabled")
+                }
 
                 Toggle(isOn: $hapticFeedback) {
                     Label("Haptic Feedback", systemImage: "hand.tap.fill")
                         .foregroundStyle(.white)
                 }
                 .tint(Color.smvCyan)
+                .onChange(of: hapticFeedback) { _, newValue in
+                    UserDefaults.standard.set(newValue, forKey: HapticService.prefKey)
+                    if newValue { haptics.selection() }
+                }
             } header: {
                 Text("Preferences")
             }
@@ -107,7 +128,9 @@ struct SettingsView: View {
                         .foregroundStyle(.white)
                 }
 
-                Button { } label: {
+                Button {
+                    Task { await subscriptions.restorePurchases() }
+                } label: {
                     Label("Restore Purchases", systemImage: "arrow.clockwise")
                         .foregroundStyle(.white)
                 }
@@ -126,7 +149,7 @@ struct SettingsView: View {
                     Label("Terms of Service", systemImage: "doc.text.fill")
                         .foregroundStyle(.white)
                 }
-                Button { } label: {
+                NavigationLink(value: Router.Destination.communityGuidelines) {
                     Label("Community Guidelines", systemImage: "checkmark.shield.fill")
                         .foregroundStyle(.white)
                 }
@@ -137,11 +160,15 @@ struct SettingsView: View {
 
             // Support
             Section {
-                Button { } label: {
+                Button {
+                    composeEmail(subject: "SMV Support Request")
+                } label: {
                     Label("Contact Support", systemImage: "envelope.fill")
                         .foregroundStyle(.white)
                 }
-                Button { } label: {
+                Button {
+                    composeEmail(subject: "SMV Bug Report")
+                } label: {
                     Label("Report a Bug", systemImage: "ladybug.fill")
                         .foregroundStyle(.white)
                 }
@@ -149,7 +176,7 @@ struct SettingsView: View {
                     Label("App Version", systemImage: "info.circle.fill")
                         .foregroundStyle(.white)
                     Spacer()
-                    Text("1.0.0 (1)")
+                    Text(appVersion)
                         .font(SMVFont.micro())
                         .foregroundStyle(Color.smvTextTertiary)
                 }
@@ -192,21 +219,74 @@ struct SettingsView: View {
         }
         .confirmationDialog("Delete Account?", isPresented: $showDeleteConfirmation) {
             Button("Delete Permanently", role: .destructive) {
-                Task {
-                    await auth.deleteAccount()
-                    router.popToRoot()
-                }
+                Task { await deleteAccount() }
             }
         } message: {
             Text("This action cannot be undone. All your data will be permanently deleted.")
         }
         .task {
-            // Load current privacy setting
+            // Load persisted local preferences.
+            let defaults = UserDefaults.standard
+            hapticFeedback = defaults.object(forKey: HapticService.prefKey) == nil
+                ? true : defaults.bool(forKey: HapticService.prefKey)
+            notificationsEnabled = defaults.object(forKey: "smv_notificationsEnabled") == nil
+                ? true : defaults.bool(forKey: "smv_notificationsEnabled")
+
+            // Load current privacy setting from Firestore (default public).
             if let userId = auth.currentUserId,
                let data = await firestore.fetchUserProfile(userId: userId) {
-                // Default to true if field doesn't exist yet
                 isProfilePublic = data["isProfilePublic"] as? Bool ?? true
             }
+            didLoadPrivacy = true
+        }
+        .overlay {
+            if isDeleting {
+                ZStack {
+                    Color.black.opacity(0.6).ignoresSafeArea()
+                    VStack(spacing: SMVSpacing.md) {
+                        ProgressView().tint(.white)
+                        Text("Deleting account…")
+                            .font(SMVFont.caption())
+                            .foregroundStyle(.white)
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Account Deletion
+
+    private func deleteAccount() async {
+        isDeleting = true
+        haptics.warning()
+
+        // 1) Wipe local on-device data so a future account can't see it.
+        clearLocalData()
+
+        // 2) Delete the Auth account. This triggers the `cleanupDeletedUser`
+        //    Cloud Function, which removes all cloud data server-side (scans,
+        //    posts, reciprocal follow edges, comments, and Storage files).
+        await auth.deleteAccount()
+
+        isDeleting = false
+        router.popToRoot()
+    }
+
+    /// Remove all locally-persisted user content (SwiftData).
+    private func clearLocalData() {
+        try? modelContext.delete(model: ScanResult.self)
+        try? modelContext.delete(model: Post.self)
+        try? modelContext.delete(model: Comment.self)
+        try? modelContext.delete(model: SMVNotification.self)
+        try? modelContext.save()
+    }
+
+    // MARK: - Support
+
+    private func composeEmail(subject: String) {
+        let encoded = subject.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? subject
+        if let url = URL(string: "mailto:support@smvapp.com?subject=\(encoded)") {
+            openURL(url)
         }
     }
 }

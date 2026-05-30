@@ -7,14 +7,18 @@
 
 import SwiftUI
 import SwiftData
+import FirebaseFirestore
 
 struct FeedView: View {
 
     @State private var selectedTab: FeedTab = .trending
     @State private var posts: [Post] = []
     @State private var isLoading = false
+    @State private var blockedIds: Set<String> = []
+    @State private var moderationMessage: String?
     @Environment(Router.self) private var router
     @Environment(FirestoreService.self) private var firestore
+    @Environment(AuthService.self) private var auth
     @Environment(\.modelContext) private var modelContext
 
     var body: some View {
@@ -53,9 +57,16 @@ struct FeedView: View {
                             Button {
                                 router.push(.postDetail(postId: post.id))
                             } label: {
-                                PostCardView(post: post)
+                                PostCardView(
+                                    post: post,
+                                    onLike: { toggleLike(post) },
+                                    onSave: { toggleSave(post) },
+                                    onReport: { reportPost(post) },
+                                    onBlock: { blockAuthor(post) }
+                                )
                             }
                             .buttonStyle(.plain)
+                            .task { await seedEngagement(post) }
 
                             Divider()
                                 .overlay(Color.smvSurface2)
@@ -74,6 +85,17 @@ struct FeedView: View {
             if posts.isEmpty {
                 await loadPosts()
             }
+        }
+        .onChange(of: selectedTab) {
+            Task { await loadPosts() }
+        }
+        .alert("Thanks for the report", isPresented: Binding(
+            get: { moderationMessage != nil },
+            set: { if !$0 { moderationMessage = nil } }
+        )) {
+            Button("OK", role: .cancel) { moderationMessage = nil }
+        } message: {
+            Text(moderationMessage ?? "")
         }
     }
 
@@ -151,33 +173,111 @@ struct FeedView: View {
     private func loadPosts() async {
         isLoading = true
 
-        // Fetch from Firestore
-        let firestorePosts = await firestore.fetchFeedPosts(limit: 30)
-
-        if !firestorePosts.isEmpty {
-            // Convert Firestore documents to Post objects
-            posts = firestorePosts.compactMap { data in
-                guard let authorId = data["authorId"] as? String,
-                      let authorName = data["authorName"] as? String,
-                      let authorHandle = data["authorHandle"] as? String else {
-                    return nil
-                }
-                return Post(
-                    id: data["id"] as? String ?? UUID().uuidString,
-                    authorId: authorId,
-                    authorName: authorName,
-                    authorHandle: authorHandle,
-                    authorScore: data["authorScore"] as? Double,
-                    caption: data["caption"] as? String ?? "",
-                    hashtags: data["hashtags"] as? [String] ?? [],
-                    likeCount: data["likeCount"] as? Int ?? 0,
-                    commentCount: data["commentCount"] as? Int ?? 0
-                )
-            }
+        // Refresh the blocked set so blocked users never appear in the feed.
+        if let userId = auth.currentUserId {
+            blockedIds = await firestore.fetchBlockedIds(userId: userId)
         }
-        // If Firestore is empty, posts stays empty → shows empty state
 
+        // Fetch a generous window so Trending/Following can filter/reorder client-side.
+        let firestorePosts = await firestore.fetchFeedPosts(limit: 60)
+
+        var mapped: [Post] = firestorePosts.compactMap { data in
+            guard let authorId = data["authorId"] as? String,
+                  let authorName = data["authorName"] as? String,
+                  let authorHandle = data["authorHandle"] as? String else {
+                return nil
+            }
+            return Post(
+                id: data["id"] as? String ?? UUID().uuidString,
+                authorId: authorId,
+                authorName: authorName,
+                authorHandle: authorHandle,
+                authorAvatarURL: data["authorAvatarURL"] as? String,
+                authorScore: data["authorScore"] as? Double,
+                imageURL: data["imageURL"] as? String,
+                caption: data["caption"] as? String ?? "",
+                hashtags: data["hashtags"] as? [String] ?? [],
+                likeCount: data["likeCount"] as? Int ?? 0,
+                commentCount: data["commentCount"] as? Int ?? 0,
+                createdAt: (data["createdAt"] as? Timestamp)?.dateValue() ?? .now,
+                scanResultId: data["scanResultId"] as? String,
+                scoreChange: data["scoreChange"] as? Double,
+                isPublic: data["isPublic"] as? Bool ?? true
+            )
+        }
+
+        // Never show posts from blocked authors.
+        mapped = mapped.filter { !blockedIds.contains($0.authorId) }
+
+        // Tab-specific filtering / ordering.
+        switch selectedTab {
+        case .new:
+            mapped.sort { $0.createdAt > $1.createdAt }
+        case .trending:
+            // Most engagement first (likes, then comments).
+            mapped.sort { ($0.likeCount, $0.commentCount) > ($1.likeCount, $1.commentCount) }
+        case .following:
+            if let userId = auth.currentUserId {
+                let followingIds = Set(await firestore.fetchFollowingIds(userId: userId))
+                mapped = mapped.filter { followingIds.contains($0.authorId) }
+            } else {
+                mapped = []
+            }
+            mapped.sort { $0.createdAt > $1.createdAt }
+        }
+
+        posts = Array(mapped.prefix(30))
         isLoading = false
+    }
+
+    // MARK: - Engagement
+
+    /// Seed like/save state for a post from Firestore when its card appears.
+    private func seedEngagement(_ post: Post) async {
+        guard let userId = auth.currentUserId else { return }
+        let liked = await firestore.isPostLiked(postId: post.id, userId: userId)
+        let saved = await firestore.isPostSaved(postId: post.id, userId: userId)
+        post.isLiked = liked
+        post.isSaved = saved
+    }
+
+    private func toggleLike(_ post: Post) {
+        guard let userId = auth.currentUserId else { return }
+        post.isLiked.toggle()
+        post.likeCount += post.isLiked ? 1 : -1
+        Task { await firestore.toggleLike(postId: post.id, userId: userId) }
+    }
+
+    private func toggleSave(_ post: Post) {
+        guard let userId = auth.currentUserId else { return }
+        post.isSaved.toggle()
+        Task { await firestore.toggleSave(postId: post.id, userId: userId) }
+    }
+
+    // MARK: - Moderation
+
+    private func reportPost(_ post: Post) {
+        guard let userId = auth.currentUserId else { return }
+        // Optimistically hide the reported post.
+        posts.removeAll { $0.id == post.id }
+        moderationMessage = "We'll review this post and take action if it violates our guidelines."
+        Task {
+            await firestore.reportPost(
+                postId: post.id,
+                authorId: post.authorId,
+                reporterId: userId,
+                reason: "user_report"
+            )
+        }
+    }
+
+    private func blockAuthor(_ post: Post) {
+        guard let userId = auth.currentUserId else { return }
+        blockedIds.insert(post.authorId)
+        // Remove everything from this author immediately.
+        posts.removeAll { $0.authorId == post.authorId }
+        moderationMessage = "You won't see posts from \(post.authorName) anymore."
+        Task { await firestore.blockUser(userId: userId, blockedId: post.authorId) }
     }
 }
 

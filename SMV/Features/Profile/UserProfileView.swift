@@ -6,6 +6,8 @@
 //
 
 import SwiftUI
+import SwiftData
+import FirebaseFirestore
 
 struct UserProfileView: View {
 
@@ -18,6 +20,7 @@ struct UserProfileView: View {
     @Environment(FirestoreService.self) private var firestore
     @Environment(AuthService.self) private var auth
     @Environment(HapticService.self) private var haptics
+    @Query(sort: \ScanResult.timestamp, order: .reverse) private var localScans: [ScanResult]
     @State private var profileName: String = ""
     @State private var profileHandle: String = ""
     @State private var profileScore: Double = 0
@@ -29,6 +32,8 @@ struct UserProfileView: View {
     @State private var isFollowing: Bool = false
     @State private var isLoaded = false
     @State private var showShareSheet = false
+    @State private var isPrivate = false
+    @State private var scans: [ProfileScan] = []
 
     @State private var avatarURL: String?
 
@@ -174,7 +179,9 @@ struct UserProfileView: View {
                         .foregroundStyle(Color.smvTextTertiary)
                         .tracking(1)
 
-                    if scanCount == 0 {
+                    if isPrivate && !isOwnProfile {
+                        privateState
+                    } else if isLoaded && scans.isEmpty {
                         VStack(spacing: SMVSpacing.md) {
                             Image(systemName: "viewfinder")
                                 .font(.system(size: 32))
@@ -185,20 +192,28 @@ struct UserProfileView: View {
                         }
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, SMVSpacing.xxl)
-                    } else {
+                    } else if !scans.isEmpty {
                         LazyVGrid(columns: [
                             GridItem(.flexible(), spacing: SMVSpacing.sm),
                             GridItem(.flexible(), spacing: SMVSpacing.sm),
                             GridItem(.flexible(), spacing: SMVSpacing.sm),
                         ], spacing: SMVSpacing.sm) {
-                            ForEach(0..<min(scanCount, 6), id: \.self) { _ in
+                            ForEach(scans.prefix(9)) { scan in
+                                scanThumbnail(scan)
+                            }
+                        }
+                    } else {
+                        // Loading shimmer
+                        LazyVGrid(columns: [
+                            GridItem(.flexible(), spacing: SMVSpacing.sm),
+                            GridItem(.flexible(), spacing: SMVSpacing.sm),
+                            GridItem(.flexible(), spacing: SMVSpacing.sm),
+                        ], spacing: SMVSpacing.sm) {
+                            ForEach(0..<min(max(scanCount, 3), 6), id: \.self) { _ in
                                 RoundedRectangle(cornerRadius: SMVRadius.sm)
                                     .fill(Color.smvSurface1)
                                     .aspectRatio(1, contentMode: .fit)
-                                    .overlay(
-                                        Image(systemName: "viewfinder")
-                                            .foregroundStyle(Color.smvTextTertiary.opacity(0.5))
-                                    )
+                                    .redacted(reason: .placeholder)
                             }
                         }
                     }
@@ -228,12 +243,24 @@ struct UserProfileView: View {
                     bestScore = data["bestScore"] as? Double ?? profileScore
                     scanCount = data["scanCount"] as? Int ?? 0
                     avatarURL = data["avatarURL"] as? String
+                    // Default to public when the field is absent
+                    isPrivate = (data["isProfilePublic"] as? Bool) == false
                 }
 
                 let stats = await firestore.fetchUserStats(userId: userId)
                 if stats.scanCount > 0 {
                     scanCount = stats.scanCount
                     bestScore = stats.bestScore
+                }
+
+                // Load actual scans. For our own profile, prefer local SwiftData
+                // (always has image data); otherwise fetch from Firestore.
+                if isOwnProfile {
+                    scans = localScans.map { ProfileScan(scan: $0) }
+                    scanCount = max(scanCount, scans.count)
+                } else if !isPrivate {
+                    let raw = await firestore.fetchUserScans(userId: userId)
+                    scans = raw.compactMap { ProfileScan(data: $0) }
                 }
 
                 // Fetch follow data
@@ -273,5 +300,107 @@ struct UserProfileView: View {
                 .foregroundStyle(Color.smvTextTertiary)
         }
         .frame(maxWidth: .infinity)
+    }
+
+    // MARK: - Private State
+
+    private var privateState: some View {
+        VStack(spacing: SMVSpacing.md) {
+            Image(systemName: "lock.fill")
+                .font(.system(size: 32))
+                .foregroundStyle(Color.smvTextTertiary)
+            Text("This profile is private")
+                .font(SMVFont.body())
+                .foregroundStyle(Color.smvTextSecondary)
+            Text("\(profileName) hasn't made their scans public.")
+                .font(SMVFont.caption())
+                .foregroundStyle(Color.smvTextTertiary)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, SMVSpacing.xxl)
+    }
+
+    // MARK: - Scan Thumbnail
+
+    private func scanThumbnail(_ scan: ProfileScan) -> some View {
+        Button {
+            router.push(.scanDetail(userId: userId, scanId: scan.id))
+        } label: {
+            Color.clear
+                .aspectRatio(1, contentMode: .fit)
+                .overlay {
+                    if let data = scan.localImageData, let uiImage = UIImage(data: data) {
+                        Image(uiImage: uiImage)
+                            .resizable()
+                            .scaledToFill()
+                    } else if let urlStr = scan.frontURL, let url = URL(string: urlStr) {
+                        CachedAsyncImage(url: url) { image in
+                            image
+                                .resizable()
+                                .scaledToFill()
+                        } placeholder: {
+                            thumbnailFallback(scan.score)
+                        }
+                    } else {
+                        thumbnailFallback(scan.score)
+                    }
+                }
+                .clipShape(RoundedRectangle(cornerRadius: SMVRadius.sm))
+            .overlay(alignment: .bottomTrailing) {
+                Text(scan.score.scoreFormatted)
+                    .font(SMVFont.micro())
+                    .fontWeight(.bold)
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(Capsule().fill(ScoreTier.from(score: scan.score).color.opacity(0.9)))
+                    .padding(4)
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func thumbnailFallback(_ score: Double) -> some View {
+        RoundedRectangle(cornerRadius: SMVRadius.sm)
+            .fill(ScoreTier.from(score: score).color.opacity(0.15))
+            .overlay(
+                Image(systemName: "person.fill")
+                    .font(.system(size: 24))
+                    .foregroundStyle(Color.smvTextTertiary)
+            )
+    }
+}
+
+// MARK: - Profile Scan Model
+
+struct ProfileScan: Identifiable {
+    let id: String
+    let score: Double
+    let frontURL: String?
+    let timestamp: Date
+    /// Locally-stored front image (own profile) — preferred over the remote URL.
+    var localImageData: Data? = nil
+
+    /// Build from a Firestore scan document (other users).
+    init?(data: [String: Any]) {
+        guard let id = data["id"] as? String else { return nil }
+        self.id = id
+        self.score = data["overallScore"] as? Double ?? 0
+        // Fall back to legacy/alternate image fields if the front URL is absent.
+        self.frontURL = (data["frontImageURL"] as? String)
+            ?? (data["imageURL"] as? String)
+            ?? (data["leftImageURL"] as? String)
+            ?? (data["rightImageURL"] as? String)
+        self.timestamp = (data["timestamp"] as? Timestamp)?.dateValue() ?? .distantPast
+    }
+
+    /// Build from a local SwiftData scan (own profile) — always has image data.
+    init(scan: ScanResult) {
+        self.id = scan.id
+        self.score = scan.overallScore
+        self.frontURL = nil
+        self.timestamp = scan.timestamp
+        self.localImageData = scan.imageData
     }
 }

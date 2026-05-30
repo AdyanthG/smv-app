@@ -164,9 +164,9 @@ struct LeaderboardView: View {
                     .foregroundStyle(Color.smvAmber)
             }
 
-            // Avatar tap → scan gallery (full screen swipeable)
+            // Avatar tap → scan gallery for the scan that earned this rank
             Button {
-                router.present(.scanGallery(userId: entry.userId, displayName: entry.name))
+                router.present(.scanGallery(userId: entry.userId, displayName: entry.name, scanId: entry.scanId, scoreField: selectedCategory.scanField))
             } label: {
                 AvatarView(name: entry.name, avatarURL: entry.avatarURL, score: entry.score, size: rank == 1 ? 56 : 44)
             }
@@ -219,9 +219,9 @@ struct LeaderboardView: View {
                 .foregroundStyle(Color.smvTextTertiary)
                 .frame(width: 32, alignment: .leading)
 
-            // Avatar tap → scan gallery
+            // Avatar tap → scan gallery for the scan that earned this rank
             Button {
-                router.present(.scanGallery(userId: entry.userId, displayName: entry.name))
+                router.present(.scanGallery(userId: entry.userId, displayName: entry.name, scanId: entry.scanId, scoreField: selectedCategory.scanField))
             } label: {
                 AvatarView(name: entry.name, avatarURL: entry.avatarURL, score: entry.score, size: 40)
             }
@@ -270,14 +270,18 @@ struct LeaderboardView: View {
 
         entries = data.compactMap { item in
             guard let name = item["displayName"] as? String else { return nil }
-            // Use the category-specific best score for ranking
-            let score = item[scoreField] as? Double ?? item["bestScore"] as? Double ?? 0
+            // Prefer the unified leaderboard score (timeframe-aware); fall back
+            // to the aggregate field for older payloads.
+            let score = item["leaderboardScore"] as? Double
+                ?? item[scoreField] as? Double
+                ?? item["bestScore"] as? Double ?? 0
             return RankEntry(
                 userId: item["id"] as? String ?? "",
                 name: name,
                 score: score,
                 scanCount: item["scanCount"] as? Int ?? 0,
-                avatarURL: item["avatarURL"] as? String
+                avatarURL: item["avatarURL"] as? String,
+                scanId: item["scanId"] as? String
             )
         }
 
@@ -294,6 +298,9 @@ struct RankEntry: Identifiable {
     let score: Double
     let scanCount: Int
     let avatarURL: String?
+    /// The specific scan that earned this score (timeframe leaderboards). When
+    /// nil, the gallery falls back to the all-time best scan for the category.
+    var scanId: String? = nil
 }
 
 // MARK: - Timeframe

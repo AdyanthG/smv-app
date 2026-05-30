@@ -109,4 +109,17 @@ final class StorageService {
             .child("scans/\(userId)/\(scanId).jpg")
         try? await ref.delete()
     }
+
+    /// Delete every scan image and the profile photo for a user (account deletion).
+    func deleteAllUserImages(userId: String) async {
+        // All scan angle images live under scans/{userId}/
+        let scansRef = storage.reference().child("scans/\(userId)")
+        if let listing = try? await scansRef.listAll() {
+            for item in listing.items {
+                try? await item.delete()
+            }
+        }
+        // Profile photo
+        try? await storage.reference().child("profiles/\(userId)/avatar.jpg").delete()
+    }
 }

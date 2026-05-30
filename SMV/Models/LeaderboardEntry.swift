@@ -83,4 +83,19 @@ enum LeaderboardCategory: String, Codable, CaseIterable {
         case .mostImproved: return "improvementRate"
         }
     }
+
+    /// The field on a *scan* document corresponding to this category. Used to
+    /// find the specific scan that earned a user's rank (vs. the user aggregate
+    /// `firestoreField`). Most Improved has no single scan → use overall best.
+    var scanField: String {
+        switch self {
+        case .global, .mostImproved: return "overallScore"
+        case .eyeArea:               return "eyeAreaScore"
+        case .jawline:               return "jawScore"
+        case .symmetry:              return "symmetryScore"
+        case .harmony:               return "harmonyScore"
+        case .proportions:           return "proportionsScore"
+        case .skinClarity:           return "skinClarityScore"
+        }
+    }
 }

@@ -13,6 +13,12 @@ struct ScanGalleryView: View {
 
     let userId: String
     let displayName: String
+    /// Show this exact scan (by Firestore doc id). Takes precedence over scoreField.
+    var scanId: String? = nil
+    /// Show the scan with the highest value in this scan-doc field (e.g. "overallScore").
+    var scoreField: String? = nil
+    /// Initial angle to display.
+    var startIndex: Int = 0
 
     @Environment(\.dismiss) private var dismiss
     @Environment(FirestoreService.self) private var firestore
@@ -133,35 +139,69 @@ struct ScanGalleryView: View {
     private func loadImages() async {
         let isOwnProfile = userId == auth.currentUserId
 
-        if isOwnProfile, let latestScan = scans.first {
-            // Load from local SwiftData
-            var result: [GalleryImage] = []
-            if let data = latestScan.imageData, let img = UIImage(data: data) {
-                result.append(GalleryImage(label: "Front", uiImage: img))
+        // Resolve the local scan to show (own profile only).
+        let localScan: ScanResult? = {
+            guard isOwnProfile else { return nil }
+            if let scanId {
+                return scans.first { $0.id == scanId }
             }
-            if let data = latestScan.leftImageData, let img = UIImage(data: data) {
-                result.append(GalleryImage(label: "Left", uiImage: img))
+            if let scoreField {
+                return scans.max { localScore($0, field: scoreField) < localScore($1, field: scoreField) }
             }
-            if let data = latestScan.rightImageData, let img = UIImage(data: data) {
-                result.append(GalleryImage(label: "Right", uiImage: img))
-            }
-            if let data = latestScan.upImageData, let img = UIImage(data: data) {
-                result.append(GalleryImage(label: "Up", uiImage: img))
-            }
-            if let data = latestScan.downImageData, let img = UIImage(data: data) {
-                result.append(GalleryImage(label: "Down", uiImage: img))
-            }
-            images = result
+            return scans.first // latest
+        }()
+
+        if let localScan {
+            images = localImages(from: localScan)
         } else {
-            // Load from Firestore URLs
-            let gallery = await firestore.fetchScanGalleryURLs(userId: userId)
+            // Load from Firestore URLs, picking the right scan.
+            let gallery: [(angle: String, url: String)]
+            if let scanId {
+                gallery = await firestore.fetchScanGalleryForScan(scanId: scanId)
+            } else if let scoreField {
+                gallery = await firestore.fetchScanGallery(userId: userId, scoreField: scoreField).images
+            } else {
+                gallery = await firestore.fetchScanGalleryURLs(userId: userId)
+            }
             images = gallery.compactMap { item in
                 guard let url = URL(string: item.url) else { return nil }
                 return GalleryImage(label: item.angle, url: url)
             }
         }
 
+        // Clamp the initial angle to the available images.
+        if !images.isEmpty {
+            currentIndex = min(max(0, startIndex), images.count - 1)
+        }
         isLoading = false
+    }
+
+    /// Build gallery images from a local SwiftData scan.
+    private func localImages(from scan: ScanResult) -> [GalleryImage] {
+        let angles: [(String, Data?)] = [
+            ("Front", scan.imageData),
+            ("Left", scan.leftImageData),
+            ("Right", scan.rightImageData),
+            ("Up", scan.upImageData),
+            ("Down", scan.downImageData),
+        ]
+        return angles.compactMap { label, data in
+            guard let data, let img = UIImage(data: data) else { return nil }
+            return GalleryImage(label: label, uiImage: img)
+        }
+    }
+
+    /// Read a scan's score for a given scan-doc field name.
+    private func localScore(_ scan: ScanResult, field: String) -> Double {
+        switch field {
+        case "eyeAreaScore":     return scan.eyeAreaScore
+        case "jawScore":         return scan.jawScore
+        case "symmetryScore":    return scan.symmetryScore
+        case "harmonyScore":     return scan.harmonyScore
+        case "proportionsScore": return scan.proportionsScore
+        case "skinClarityScore": return scan.skinClarityScore
+        default:                 return scan.overallScore
+        }
     }
 }
 

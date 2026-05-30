@@ -25,6 +25,12 @@ enum AuthState: Equatable {
 @Observable
 final class AuthService {
 
+    /// Sign in with Apple requires the "Sign in with Apple" capability, which
+    /// requires a paid Apple Developer Program membership. Flip this to `true`
+    /// after adding the capability in Xcode (Signing & Capabilities) — the full
+    /// implementation below (`prepareNonce` / `handleAppleSignIn`) is ready.
+    static let appleSignInAvailable = false
+
     var state: AuthState = .unknown
     var currentUserId: String? {
         if case .signedIn(let id) = state { return id }

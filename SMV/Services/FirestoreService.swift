@@ -30,6 +30,7 @@ final class FirestoreService {
         var data: [String: Any] = [
             "displayName": displayName,
             "handle": handle,
+            "handleLower": handle.trimmingCharacters(in: .whitespaces).lowercased(),
             "bio": bio,
             "gender": gender,
             "updatedAt": FieldValue.serverTimestamp(),
@@ -48,6 +49,24 @@ final class FirestoreService {
         }
     }
 
+    /// Whether a handle is free (case-insensitive), ignoring the current user.
+    /// Empty handles are always "available" (treated as unset).
+    func isHandleAvailable(_ handle: String, excludingUserId: String) async -> Bool {
+        let normalized = handle.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !normalized.isEmpty else { return true }
+        do {
+            let snapshot = try await db.collection("users")
+                .whereField("handleLower", isEqualTo: normalized)
+                .limit(to: 1)
+                .getDocuments()
+            // Available if nobody else holds it.
+            return snapshot.documents.allSatisfy { $0.documentID == excludingUserId }
+        } catch {
+            // On error, don't block the user — fail open.
+            return true
+        }
+    }
+
     func fetchUserProfile(userId: String) async -> [String: Any]? {
         do {
             let doc = try await db.collection("users").document(userId).getDocument()
@@ -60,8 +79,16 @@ final class FirestoreService {
 
     // MARK: - Scan Results
 
-    func saveScanResult(userId: String, result: ScanResult) async -> String? {
-        let data: [String: Any] = [
+    /// Save a scan. The Firestore document ID is the local `result.id`, so a scan
+    /// resolves identically whether referenced locally or remotely (posts,
+    /// profiles, leaderboard). `imageURLs` (frontImageURL, etc.) are written into
+    /// the same document when provided. Returns the scan document ID, or nil only
+    /// if the scan-document write fails (the user-aggregate update is best-effort
+    /// and never discards a successfully-written scan).
+    @discardableResult
+    func saveScanResult(userId: String, result: ScanResult, imageURLs: [String: String] = [:]) async -> String? {
+        let scanId = result.id
+        var data: [String: Any] = [
             "userId": userId,
             "overallScore": result.overallScore,
             "eyeAreaScore": result.eyeAreaScore,
@@ -82,12 +109,22 @@ final class FirestoreService {
             "rawSymmetry": result.rawSymmetry,
             "failos": result.failos,
             "failoPenalty": result.failoPenalty,
+            "isMultiAngleScan": result.isMultiAngleScan,
             "timestamp": FieldValue.serverTimestamp(),
         ]
+        for (field, url) in imageURLs { data[field] = url }
 
+        // 1) Write the scan document (deterministic ID). This is the critical write.
         do {
-            let docRef = try await db.collection("scans").addDocument(data: data)
+            try await db.collection("scans").document(scanId).setData(data, merge: true)
+        } catch {
+            errorMessage = error.localizedDescription
+            return nil
+        }
 
+        // 2) Update the user aggregate (leaderboard stats). Best-effort: a failure
+        //    here must not discard the scan we just saved.
+        do {
             // Update user's latest score and stats
             let userRef = db.collection("users").document(userId)
             let userDoc = try await userRef.getDocument()
@@ -135,7 +172,6 @@ final class FirestoreService {
                 "scanCount": FieldValue.increment(Int64(1)),
                 "lastScanAt": FieldValue.serverTimestamp(),
                 "streak": streak,
-                "isProfilePublic": true, // Default to public
             ]
 
             // Only set firstScore on the very first scan
@@ -144,12 +180,11 @@ final class FirestoreService {
             }
 
             try await userRef.setData(updateData, merge: true)
-
-            return docRef.documentID
         } catch {
             errorMessage = error.localizedDescription
-            return nil
         }
+
+        return scanId
     }
 
     /// Update a scan document with image download URLs after storage upload
@@ -171,27 +206,82 @@ final class FirestoreService {
                 .getDocuments()
 
             guard let doc = snapshot.documents.first else { return [] }
-            let data = doc.data()
-            var results: [(String, String)] = []
-
-            let angleKeys = [
-                ("Front", "frontImageURL"),
-                ("Left", "leftImageURL"),
-                ("Right", "rightImageURL"),
-                ("Up", "upTiltImageURL"),
-                ("Down", "downTiltImageURL"),
-            ]
-
-            for (label, key) in angleKeys {
-                if let url = data[key] as? String {
-                    results.append((label, url))
-                }
-            }
-
-            return results
+            return angleURLs(from: doc.data())
         } catch {
             return []
         }
+    }
+
+    /// Ordered angle keys shared by gallery fetches: (label, scan-doc field)
+    private static let angleURLKeys: [(label: String, field: String)] = [
+        ("Front", "frontImageURL"),
+        ("Left", "leftImageURL"),
+        ("Right", "rightImageURL"),
+        ("Up", "upTiltImageURL"),
+        ("Down", "downTiltImageURL"),
+    ]
+
+    /// Extract angle image URLs from a scan document's data
+    private func angleURLs(from data: [String: Any]) -> [(angle: String, url: String)] {
+        FirestoreService.angleURLKeys.compactMap { label, field in
+            guard let url = data[field] as? String else { return nil }
+            return (label, url)
+        }
+    }
+
+    /// Fetch a single scan document by its Firestore document ID
+    func fetchScan(scanId: String) async -> [String: Any]? {
+        do {
+            let doc = try await db.collection("scans").document(scanId).getDocument()
+            guard var data = doc.data() else { return nil }
+            data["id"] = doc.documentID
+            return data
+        } catch {
+            errorMessage = error.localizedDescription
+            return nil
+        }
+    }
+
+    /// Fetch all of a user's scans (sorted newest-first in memory to avoid a
+    /// composite index requirement). Each dict includes the document `id`.
+    func fetchUserScans(userId: String, limit: Int = 30) async -> [[String: Any]] {
+        do {
+            let snapshot = try await db.collection("scans")
+                .whereField("userId", isEqualTo: userId)
+                .getDocuments()
+
+            let scans = snapshot.documents.map { doc -> [String: Any] in
+                var data = doc.data()
+                data["id"] = doc.documentID
+                return data
+            }.sorted { a, b in
+                let aTime = (a["timestamp"] as? Timestamp)?.dateValue() ?? .distantPast
+                let bTime = (b["timestamp"] as? Timestamp)?.dateValue() ?? .distantPast
+                return aTime > bTime
+            }
+
+            return Array(scans.prefix(limit))
+        } catch {
+            errorMessage = error.localizedDescription
+            return []
+        }
+    }
+
+    /// Fetch the angle gallery for the scan that achieved a user's best score in
+    /// the given scan field (e.g. "overallScore", "eyeAreaScore"). Returns the
+    /// chosen scan's document id plus its angle image URLs.
+    func fetchScanGallery(userId: String, scoreField: String) async -> (scanId: String?, images: [(angle: String, url: String)]) {
+        let scans = await fetchUserScans(userId: userId)
+        guard let best = scans.max(by: { a, b in
+            (a[scoreField] as? Double ?? 0) < (b[scoreField] as? Double ?? 0)
+        }) else { return (nil, []) }
+        return (best["id"] as? String, angleURLs(from: best))
+    }
+
+    /// Fetch the angle gallery for one specific scan document
+    func fetchScanGalleryForScan(scanId: String) async -> [(angle: String, url: String)] {
+        guard let data = await fetchScan(scanId: scanId) else { return [] }
+        return angleURLs(from: data)
     }
 
     // MARK: - Posts
@@ -203,9 +293,13 @@ final class FirestoreService {
         caption: String,
         hashtags: [String],
         scanResultId: String? = nil,
-        authorScore: Double? = nil
+        authorScore: Double? = nil,
+        authorAvatarURL: String? = nil,
+        imageURL: String? = nil,
+        scoreChange: Double? = nil,
+        isPublic: Bool = true
     ) async -> String? {
-        let data: [String: Any] = [
+        var data: [String: Any] = [
             "authorId": authorId,
             "authorName": authorName,
             "authorHandle": authorHandle,
@@ -215,9 +309,12 @@ final class FirestoreService {
             "authorScore": authorScore as Any,
             "likeCount": 0,
             "commentCount": 0,
-            "isPublic": true,
+            "isPublic": isPublic,
             "createdAt": FieldValue.serverTimestamp(),
         ]
+        if let authorAvatarURL { data["authorAvatarURL"] = authorAvatarURL }
+        if let imageURL { data["imageURL"] = imageURL }
+        if let scoreChange { data["scoreChange"] = scoreChange }
 
         do {
             let docRef = try await db.collection("posts").addDocument(data: data)
@@ -225,6 +322,50 @@ final class FirestoreService {
         } catch {
             errorMessage = error.localizedDescription
             return nil
+        }
+    }
+
+    /// Fetch a single post document by ID (for opening posts not cached locally)
+    func fetchPost(postId: String) async -> [String: Any]? {
+        do {
+            let doc = try await db.collection("posts").document(postId).getDocument()
+            guard var data = doc.data() else { return nil }
+            data["id"] = doc.documentID
+            return data
+        } catch {
+            errorMessage = error.localizedDescription
+            return nil
+        }
+    }
+
+    /// Fetch comments for a post, oldest-first (sorted in memory)
+    func fetchComments(postId: String) async -> [[String: Any]] {
+        do {
+            let snapshot = try await db.collection("posts").document(postId)
+                .collection("comments").getDocuments()
+            return snapshot.documents.map { doc -> [String: Any] in
+                var data = doc.data()
+                data["id"] = doc.documentID
+                return data
+            }.sorted { a, b in
+                let aTime = (a["createdAt"] as? Timestamp)?.dateValue() ?? .distantPast
+                let bTime = (b["createdAt"] as? Timestamp)?.dateValue() ?? .distantPast
+                return aTime < bTime
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+            return []
+        }
+    }
+
+    /// Whether the given user has liked a post
+    func isPostLiked(postId: String, userId: String) async -> Bool {
+        do {
+            let doc = try await db.collection("posts").document(postId)
+                .collection("likes").document(userId).getDocument()
+            return doc.exists
+        } catch {
+            return false
         }
     }
 
@@ -268,6 +409,83 @@ final class FirestoreService {
         }
     }
 
+    // MARK: - Moderation (Report / Block)
+
+    /// File a report against a post for review (App Store UGC requirement).
+    func reportPost(postId: String, authorId: String, reporterId: String, reason: String) async {
+        do {
+            try await db.collection("reports").addDocument(data: [
+                "postId": postId,
+                "authorId": authorId,
+                "reporterId": reporterId,
+                "reason": reason,
+                "status": "pending",
+                "createdAt": FieldValue.serverTimestamp(),
+            ])
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    /// Block a user. Their content is hidden from the blocker's feed.
+    func blockUser(userId: String, blockedId: String) async {
+        do {
+            try await db.collection("users").document(userId)
+                .collection("blocked").document(blockedId)
+                .setData(["timestamp": FieldValue.serverTimestamp()])
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func unblockUser(userId: String, blockedId: String) async {
+        try? await db.collection("users").document(userId)
+            .collection("blocked").document(blockedId).delete()
+    }
+
+    /// IDs the user has blocked (to filter feeds/leaderboards/profiles).
+    func fetchBlockedIds(userId: String) async -> Set<String> {
+        do {
+            let snapshot = try await db.collection("users").document(userId)
+                .collection("blocked").getDocuments()
+            return Set(snapshot.documents.map { $0.documentID })
+        } catch {
+            return []
+        }
+    }
+
+    // MARK: - Saves (Bookmarks)
+
+    /// Whether the given user has saved/bookmarked a post
+    func isPostSaved(postId: String, userId: String) async -> Bool {
+        do {
+            let doc = try await db.collection("users").document(userId)
+                .collection("saved").document(postId).getDocument()
+            return doc.exists
+        } catch {
+            return false
+        }
+    }
+
+    /// Toggle a post's saved state for a user. Stored under users/{uid}/saved/{postId}.
+    func toggleSave(postId: String, userId: String) async {
+        let savedRef = db.collection("users").document(userId)
+            .collection("saved").document(postId)
+        do {
+            let doc = try await savedRef.getDocument()
+            if doc.exists {
+                try await savedRef.delete()
+            } else {
+                try await savedRef.setData([
+                    "postId": postId,
+                    "timestamp": FieldValue.serverTimestamp(),
+                ])
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
     // MARK: - Comments
 
     func saveComment(
@@ -303,81 +521,124 @@ final class FirestoreService {
         TimeZone(identifier: "America/New_York") ?? TimeZone(secondsFromGMT: -5 * 3600)!
     }
 
+    /// EST-based cutoff for a timeframe. Returns nil for "All Time".
+    private func cutoffDate(for timeframe: String) -> Date? {
+        var estCalendar = Calendar.current
+        estCalendar.timeZone = estTimeZone
+        let now = Date()
+        switch timeframe {
+        case "Today":
+            return estCalendar.startOfDay(for: now)
+        case "This Week":
+            return estCalendar.date(byAdding: .day, value: -7, to: estCalendar.startOfDay(for: now))
+        default:
+            return nil
+        }
+    }
+
     func fetchLeaderboard(
         category: String = "Global",
         timeframe: String = "All Time",
         limit: Int = 50
     ) async -> [[String: Any]] {
+        let cat = LeaderboardCategory(rawValue: category) ?? .global
+
+        // Timeframe-scoped leaderboards (Today / This Week) must rank by the best
+        // *scan within that window*, not the user's all-time aggregate. Most
+        // Improved is inherently cumulative, so it stays on the aggregate path.
+        if let cutoff = cutoffDate(for: timeframe), cat != .mostImproved {
+            return await fetchTimeframeLeaderboard(scanField: cat.scanField, cutoff: cutoff, limit: limit)
+        }
+
+        // All Time (and Most Improved): rank by the user aggregate field.
+        let sortField = cat.firestoreField
         do {
-            // Determine the sort field from category
-            let sortField: String
-            if let cat = LeaderboardCategory(rawValue: category) {
-                sortField = cat.firestoreField
-            } else {
-                sortField = "bestScore"
-            }
-
-            // Always fetch by score — avoids Firestore composite index requirements
-            let query: Query = db.collection("users")
+            let snapshot = try await db.collection("users")
                 .order(by: sortField, descending: true)
-                .limit(to: limit * 3) // Over-fetch to account for timeframe filtering
+                .limit(to: limit * 3)
+                .getDocuments()
 
-            let snapshot = try await query.getDocuments()
-
-            // Compute EST-based cutoff dates for timeframe filtering
-            var estCalendar = Calendar.current
-            estCalendar.timeZone = estTimeZone
-            let now = Date()
-
-            let cutoffDate: Date? = {
-                switch timeframe {
-                case "Today":
-                    return estCalendar.startOfDay(for: now)
-                case "This Week":
-                    return estCalendar.date(byAdding: .day, value: -7, to: estCalendar.startOfDay(for: now))
-                default:
-                    return nil // All Time — no cutoff
-                }
-            }()
-
-            // Filter and sort in-memory
-            let isMostImproved = category == "Most Improved"
+            let isMostImproved = cat == .mostImproved
             let results = snapshot.documents.compactMap { doc -> [String: Any]? in
                 var data = doc.data()
                 data["id"] = doc.documentID
 
-                // Filter out private profiles
                 if data["isProfilePublic"] as? Bool == false { return nil }
 
-                // Must have a score > 0 in the sort field
                 let score = data[sortField] as? Double ?? 0
                 if score <= 0 { return nil }
 
-                // For Most Improved, require at least 2 scans
                 if isMostImproved {
                     let scanCount = data["scanCount"] as? Int ?? 0
                     if scanCount < 2 { return nil }
                 }
 
-                // Apply timeframe filter (in-memory using EST)
-                if let cutoff = cutoffDate {
-                    guard let lastScanTimestamp = data["lastScanAt"] as? Timestamp else { return nil }
-                    if lastScanTimestamp.dateValue() < cutoff { return nil }
-                }
-
+                // Unified score key used by the leaderboard view.
+                data["leaderboardScore"] = score
                 return data
             }.sorted { a, b in
-                let aScore = a[sortField] as? Double ?? 0
-                let bScore = b[sortField] as? Double ?? 0
-                return aScore > bScore
+                (a[sortField] as? Double ?? 0) > (b[sortField] as? Double ?? 0)
             }
 
-            // Apply final limit and assign ranks
             return Array(results.prefix(limit)).enumerated().map { index, item in
                 var data = item
                 data["rank"] = index + 1
                 return data
             }
+        } catch {
+            errorMessage = error.localizedDescription
+            return []
+        }
+    }
+
+    /// Rank users by their best scan in the given field since `cutoff`. Each
+    /// entry carries the exact scan id that earned the score so the gallery/avatar
+    /// can open *that* scan (not the all-time best).
+    private func fetchTimeframeLeaderboard(scanField: String, cutoff: Date, limit: Int) async -> [[String: Any]] {
+        do {
+            // Single-field range filter → uses the default index, no composite index.
+            let snapshot = try await db.collection("scans")
+                .whereField("timestamp", isGreaterThanOrEqualTo: Timestamp(date: cutoff))
+                .getDocuments()
+
+            // Best scan per user within the window.
+            struct Best { var score: Double; var scanId: String; var count: Int }
+            var bestByUser: [String: Best] = [:]
+            for doc in snapshot.documents {
+                let data = doc.data()
+                guard let uid = data["userId"] as? String else { continue }
+                let score = data[scanField] as? Double ?? 0
+                if score <= 0 { continue }
+                if var existing = bestByUser[uid] {
+                    existing.count += 1
+                    if score > existing.score {
+                        existing.score = score
+                        existing.scanId = doc.documentID
+                    }
+                    bestByUser[uid] = existing
+                } else {
+                    bestByUser[uid] = Best(score: score, scanId: doc.documentID, count: 1)
+                }
+            }
+
+            // Highest scorers first; join with profiles for display + privacy.
+            let ranked = bestByUser.sorted { $0.value.score > $1.value.score }.prefix(limit)
+            var results: [[String: Any]] = []
+            for (uid, best) in ranked {
+                guard let profile = await fetchUserProfile(userId: uid) else { continue }
+                if profile["isProfilePublic"] as? Bool == false { continue }
+                guard let name = profile["displayName"] as? String else { continue }
+                results.append([
+                    "id": uid,
+                    "displayName": name,
+                    "avatarURL": profile["avatarURL"] as Any,
+                    "scanCount": best.count,
+                    "leaderboardScore": best.score,
+                    "scanId": best.scanId,
+                    "rank": results.count + 1,
+                ])
+            }
+            return results
         } catch {
             errorMessage = error.localizedDescription
             return []
@@ -525,6 +786,17 @@ final class FirestoreService {
         }
     }
 
+    /// Fetch the set of user IDs that the given user follows (for the Following feed)
+    func fetchFollowingIds(userId: String) async -> [String] {
+        do {
+            let snapshot = try await db.collection("users").document(userId)
+                .collection("following").getDocuments()
+            return snapshot.documents.map { $0.documentID }
+        } catch {
+            return []
+        }
+    }
+
     func getFollowCounts(userId: String) async -> (followers: Int, following: Int) {
         do {
             let doc = try await db.collection("users").document(userId).getDocument()
@@ -642,6 +914,39 @@ final class FirestoreService {
         } catch {
             return [:]
         }
+    }
+
+    // MARK: - Account Deletion
+
+    /// Best-effort deletion of all of a user's cloud data. Must be called while
+    /// the user is still authenticated (rules require the owner). Subcollections
+    /// written by *other* users (e.g. this user's `followers`) are intentionally
+    /// not enumerated here — a Cloud Function is the robust path for full fan-out
+    /// cleanup, but this removes the bulk of the account's PII.
+    func deleteAllUserData(userId: String) async {
+        // 1) Scans
+        if let scans = try? await db.collection("scans")
+            .whereField("userId", isEqualTo: userId).getDocuments() {
+            for doc in scans.documents { try? await doc.reference.delete() }
+        }
+
+        // 2) Posts (and their like/comment subcollections are removed with the doc
+        //    on the client's view; server-side orphans need a Function to sweep)
+        if let posts = try? await db.collection("posts")
+            .whereField("authorId", isEqualTo: userId).getDocuments() {
+            for doc in posts.documents { try? await doc.reference.delete() }
+        }
+
+        // 3) Owned subcollections under the user document
+        for sub in ["following", "saved"] {
+            if let docs = try? await db.collection("users").document(userId)
+                .collection(sub).getDocuments() {
+                for doc in docs.documents { try? await doc.reference.delete() }
+            }
+        }
+
+        // 4) The user profile document itself
+        try? await db.collection("users").document(userId).delete()
     }
 
     // MARK: - Profile Visibility
