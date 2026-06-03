@@ -29,30 +29,33 @@ const daysSince = (date) => Math.floor((Date.now() - date.getTime()) / 86_400_00
 
 // ── Core sender ──
 async function sendToUser(uid, { title, body, data = {}, logInApp = false }) {
-  try {
-    const snap = await db.collection("users").doc(uid).get();
-    const u = snap.data();
-    if (!u || !u.fcmToken) return false;
-    if (u.notificationsEnabled === false) return false;
+  const snap = await db.collection("users").doc(uid).get();
+  const u = snap.data();
+  if (!u || u.notificationsEnabled === false) return false;
 
+  // 1) Mirror personal notifications into the in-app feed (with deep-link ids).
+  //    Done first so the feed works even before push delivery (APNs) is set up.
+  if (logInApp) {
+    const entry = {
+      title, body, type: data.type || "general", read: false,
+      createdAt: FieldValue.serverTimestamp(),
+    };
+    if (data.postId) entry.postId = data.postId;
+    if (data.userId) entry.userId = data.userId;
+    if (data.tab) entry.tab = data.tab;
+    await db.collection("users").doc(uid).collection("notifications").add(entry).catch((e) =>
+      console.error(`[inApp:${uid}]`, e.message));
+  }
+
+  // 2) Attempt the push (no-ops safely until an APNs key is configured).
+  if (!u.fcmToken) return false;
+  try {
     await admin.messaging().send({
       token: u.fcmToken,
       notification: { title, body },
       data: Object.fromEntries(Object.entries(data).map(([k, v]) => [k, String(v)])),
       apns: { payload: { aps: { sound: "default", badge: 1 } } },
     });
-
-    // Mirror personal notifications into an in-app feed (with deep-link ids).
-    if (logInApp) {
-      const entry = {
-        title, body, type: data.type || "general", read: false,
-        createdAt: FieldValue.serverTimestamp(),
-      };
-      if (data.postId) entry.postId = data.postId;
-      if (data.userId) entry.userId = data.userId;
-      if (data.tab) entry.tab = data.tab;
-      await db.collection("users").doc(uid).collection("notifications").add(entry);
-    }
     return true;
   } catch (e) {
     if (e.code === "messaging/registration-token-not-registered" ||
