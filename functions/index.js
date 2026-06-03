@@ -8,6 +8,9 @@ admin.initializeApp();
 const db = admin.firestore();
 const FieldValue = admin.firestore.FieldValue;
 
+// Push-notification functions (social triggers + scheduled engagement/FOMO).
+Object.assign(exports, require("./notifications"));
+
 /**
  * Full account-deletion cleanup.
  *

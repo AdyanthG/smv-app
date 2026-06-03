@@ -964,6 +964,17 @@ final class FirestoreService {
         }
     }
 
+    /// Persist the push-notification opt-in so Cloud Functions honor it.
+    func setNotificationsEnabled(userId: String, enabled: Bool) async {
+        do {
+            try await db.collection("users").document(userId).setData([
+                "notificationsEnabled": enabled,
+            ], merge: true)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
     // MARK: - Streak
 
     func fetchUserStreak(userId: String) async -> Int {

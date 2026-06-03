@@ -186,6 +186,7 @@ final class AuthService {
                     "displayName": resolvedName,
                     "email": email,
                     "isProfilePublic": true,
+                    "notificationsEnabled": true,
                     "followerCount": 0,
                     "followingCount": 0,
                     "createdAt": FieldValue.serverTimestamp(),
@@ -252,6 +253,7 @@ final class AuthService {
             try? await db.collection("users").document(userId).setData([
                 "displayName": name,
                 "isProfilePublic": true,
+                "notificationsEnabled": true,
                 "followerCount": 0,
                 "followingCount": 0,
                 "createdAt": FieldValue.serverTimestamp(),

@@ -92,6 +92,9 @@ struct SettingsView: View {
                 .tint(Color.smvCyan)
                 .onChange(of: notificationsEnabled) { _, newValue in
                     UserDefaults.standard.set(newValue, forKey: "smv_notificationsEnabled")
+                    if let userId = auth.currentUserId {
+                        Task { await firestore.setNotificationsEnabled(userId: userId, enabled: newValue) }
+                    }
                 }
 
                 Toggle(isOn: $hapticFeedback) {
