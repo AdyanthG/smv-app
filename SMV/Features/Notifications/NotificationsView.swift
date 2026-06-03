@@ -2,54 +2,70 @@
 //  NotificationsView.swift
 //  SMV
 //
-//  Notification feed — milestones, rank changes, updates.
+//  In-app notification feed backed by Firestore (users/{uid}/notifications),
+//  populated by the Cloud Functions notification system.
 //
 
 import SwiftUI
+import FirebaseFirestore
 
 struct NotificationsView: View {
 
-    // Mock notifications
-    private let notifications: [NotificationItem] = [
-        NotificationItem(icon: "chart.line.uptrend.xyaxis", title: "Score Improved", subtitle: "Your score went up +0.3 since last scan", time: "2h ago", accent: .smvEmerald),
-        NotificationItem(icon: "trophy.fill", title: "Rank Up", subtitle: "You moved to #47 on the global leaderboard", time: "5h ago", accent: .smvAmber),
-        NotificationItem(icon: "flame.fill", title: "7 Day Streak", subtitle: "Keep scanning daily to track your progress", time: "1d ago", accent: .smvPink),
-        NotificationItem(icon: "person.2.fill", title: "New Follower", subtitle: "jaydenk started following you", time: "2d ago", accent: .smvCyan),
-        NotificationItem(icon: "chart.bar.fill", title: "Weekly Summary", subtitle: "Your average score this week: 5.4", time: "3d ago", accent: .smvViolet),
-    ]
+    @Environment(AuthService.self) private var auth
+    @Environment(FirestoreService.self) private var firestore
+    @Environment(Router.self) private var router
+
+    @State private var items: [NotificationFeedItem] = []
+    @State private var isLoading = true
 
     var body: some View {
-        NavigationStack {
-            Group {
-                if notifications.isEmpty {
-                    emptyState
-                } else {
-                    notificationList
-                }
+        Group {
+            if isLoading {
+                ProgressView().tint(Color.smvCyan)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if items.isEmpty {
+                emptyState
+            } else {
+                notificationList
             }
-            .background(Color.smvBackground)
-            .navigationTitle("Notifications")
-            .navigationBarTitleDisplayMode(.inline)
+        }
+        .background(Color.smvBackground)
+        .navigationTitle("Notifications")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbarColorScheme(.dark, for: .navigationBar)
+        .task {
+            await load()
         }
     }
 
     private var notificationList: some View {
         ScrollView {
             LazyVStack(spacing: 0) {
-                ForEach(notifications) { item in
-                    notificationRow(item)
-                    Divider()
-                        .overlay(Color.smvSurface2)
+                ForEach(items) { item in
+                    Button {
+                        router.handleNotification(
+                            type: item.type,
+                            postId: item.postId,
+                            userId: item.userId,
+                            tab: item.tab
+                        )
+                    } label: {
+                        notificationRow(item)
+                    }
+                    .buttonStyle(.plain)
+
+                    Divider().overlay(Color.smvSurface2)
                 }
             }
+            .padding(.bottom, 40)
         }
     }
 
-    private func notificationRow(_ item: NotificationItem) -> some View {
+    private func notificationRow(_ item: NotificationFeedItem) -> some View {
         HStack(spacing: SMVSpacing.md) {
             ZStack {
                 RoundedRectangle(cornerRadius: SMVRadius.sm)
-                    .fill(item.accent.opacity(0.1))
+                    .fill(item.accent.opacity(0.12))
                     .frame(width: 40, height: 40)
                 Image(systemName: item.icon)
                     .font(.system(size: 16))
@@ -60,19 +76,27 @@ struct NotificationsView: View {
                 Text(item.title)
                     .font(SMVFont.title())
                     .foregroundStyle(.white)
-                Text(item.subtitle)
+                Text(item.body)
                     .font(SMVFont.caption())
                     .foregroundStyle(Color.smvTextSecondary)
+                    .lineLimit(2)
             }
 
             Spacer()
 
-            Text(item.time)
-                .font(SMVFont.micro())
-                .foregroundStyle(Color.smvTextTertiary)
+            VStack(alignment: .trailing, spacing: SMVSpacing.xs) {
+                Text(item.createdAt.relativeShort)
+                    .font(SMVFont.micro())
+                    .foregroundStyle(Color.smvTextTertiary)
+                if !item.read {
+                    Circle().fill(Color.smvCyan).frame(width: 8, height: 8)
+                }
+            }
         }
         .padding(.horizontal, SMVSpacing.lg)
         .padding(.vertical, SMVSpacing.md)
+        .background(item.read ? Color.clear : Color.smvSurface0.opacity(0.5))
+        .contentShape(Rectangle())
     }
 
     private var emptyState: some View {
@@ -83,22 +107,79 @@ struct NotificationsView: View {
             Text("No notifications yet")
                 .font(SMVFont.title())
                 .foregroundStyle(Color.smvTextSecondary)
-            Text("Start scanning to get score updates and milestones")
+            Text("Follows, likes, comments, and milestones will show up here.")
                 .font(SMVFont.caption())
                 .foregroundStyle(Color.smvTextTertiary)
                 .multilineTextAlignment(.center)
+                .padding(.horizontal, SMVSpacing.xxl)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
+
+    private func load() async {
+        guard let userId = auth.currentUserId else {
+            isLoading = false
+            return
+        }
+        let raw = await firestore.fetchNotifications(userId: userId)
+        items = raw.compactMap { NotificationFeedItem(data: $0) }
+        isLoading = false
+        // Mark everything read now that the feed has been opened.
+        await firestore.markNotificationsRead(userId: userId)
+    }
 }
 
-// MARK: - Notification Model
+// MARK: - Model
 
-struct NotificationItem: Identifiable {
-    let id = UUID()
-    let icon: String
+struct NotificationFeedItem: Identifiable {
+    let id: String
     let title: String
-    let subtitle: String
-    let time: String
-    let accent: Color
+    let body: String
+    let type: String
+    let postId: String?
+    let userId: String?
+    let tab: String?
+    let read: Bool
+    let createdAt: Date
+
+    init?(data: [String: Any]) {
+        guard let id = data["id"] as? String else { return nil }
+        self.id = id
+        self.title = data["title"] as? String ?? "Notification"
+        self.body = data["body"] as? String ?? ""
+        self.type = data["type"] as? String ?? "general"
+        self.postId = data["postId"] as? String
+        self.userId = data["userId"] as? String
+        self.tab = data["tab"] as? String
+        self.read = data["read"] as? Bool ?? false
+        self.createdAt = (data["createdAt"] as? Timestamp)?.dateValue() ?? .distantPast
+    }
+
+    var icon: String {
+        switch type {
+        case "follow":         return "person.2.fill"
+        case "like":           return "heart.fill"
+        case "comment":        return "bubble.left.fill"
+        case "vote_milestone": return "trophy.fill"
+        case "vote_recap":     return "chart.bar.fill"
+        case "daily_scan", "smv_drop": return "bolt.fill"
+        case "streak":         return "flame.fill"
+        case "dormant":        return "face.smiling.fill"
+        default:               return "bell.fill"
+        }
+    }
+
+    var accent: Color {
+        switch type {
+        case "follow":         return .smvCyan
+        case "like":           return .smvPink
+        case "comment":        return .smvViolet
+        case "vote_milestone": return .smvAmber
+        case "vote_recap":     return .smvViolet
+        case "daily_scan", "smv_drop": return .smvCyan
+        case "streak":         return .smvPink
+        case "dormant":        return .smvAmber
+        default:               return .smvCyan
+        }
+    }
 }

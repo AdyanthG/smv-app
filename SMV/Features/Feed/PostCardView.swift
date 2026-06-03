@@ -15,6 +15,7 @@ struct PostCardView: View {
     var onSave: (() -> Void)? = nil
     var onReport: (() -> Void)? = nil
     var onBlock: (() -> Void)? = nil
+    var onShare: (() -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -73,13 +74,13 @@ struct PostCardView: View {
                         CachedAsyncImage(url: url) { image in
                             image
                                 .resizable()
-                                .scaledToFill()
+                                .scaledToFit()
                         } placeholder: {
                             imagePlaceholder
                         }
                         .frame(maxWidth: .infinity)
-                        .frame(height: 300)
-                        .clipped()
+                        .frame(maxHeight: 400)
+                        .background(Color.smvSurface1)
                     } else {
                         imagePlaceholder
                             .frame(height: 300)
@@ -144,7 +145,7 @@ struct PostCardView: View {
                     icon: "square.and.arrow.up",
                     count: 0,
                     color: .smvTextTertiary,
-                    action: { }
+                    action: { onShare?() }
                 )
 
                 Spacer()

@@ -40,6 +40,25 @@ extension AppDelegate: UNUserNotificationCenterDelegate {
     ) async -> UNNotificationPresentationOptions {
         return [.banner, .badge, .sound]
     }
+
+    /// User tapped a push — broadcast its payload so the UI can deep-link.
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse
+    ) async {
+        let userInfo = response.notification.request.content.userInfo
+        await MainActor.run {
+            NotificationCenter.default.post(
+                name: .smvNotificationTapped,
+                object: nil,
+                userInfo: userInfo
+            )
+        }
+    }
+}
+
+extension Notification.Name {
+    static let smvNotificationTapped = Notification.Name("smvNotificationTapped")
 }
 
 @main
@@ -106,9 +125,11 @@ struct SMVApp: App {
                 .task {
                     auth.start()
                     await subscriptions.updateSubscriptionStatus()
-                    await notifications.requestPermission()
 
-                    // Register FCM token if signed in
+                    // Notification permission is requested contextually during
+                    // onboarding (not cold on launch). Re-check status and register
+                    // the FCM token if already authorized.
+                    await notifications.checkCurrentPermission()
                     if let userId = auth.currentUserId {
                         await notifications.registerToken(userId: userId, firestore: firestore)
                     }

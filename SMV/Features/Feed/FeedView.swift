@@ -16,6 +16,7 @@ struct FeedView: View {
     @State private var isLoading = false
     @State private var blockedIds: Set<String> = []
     @State private var moderationMessage: String?
+    @State private var sharePost: Post?
     @Environment(Router.self) private var router
     @Environment(FirestoreService.self) private var firestore
     @Environment(AuthService.self) private var auth
@@ -62,7 +63,8 @@ struct FeedView: View {
                                     onLike: { toggleLike(post) },
                                     onSave: { toggleSave(post) },
                                     onReport: { reportPost(post) },
-                                    onBlock: { blockAuthor(post) }
+                                    onBlock: { blockAuthor(post) },
+                                    onShare: { sharePost = post }
                                 )
                             }
                             .buttonStyle(.plain)
@@ -91,6 +93,11 @@ struct FeedView: View {
         }
         .onChange(of: router.feedRefreshToken) {
             Task { await loadPosts() }
+        }
+        .sheet(item: $sharePost) { post in
+            let caption = post.caption.isEmpty ? "Check out their scan on SMV." : post.caption
+            ShareSheet(items: ["\(post.authorName) on SMV: \(caption)"])
+                .presentationDetents([.medium])
         }
         .alert("Thanks for the report", isPresented: Binding(
             get: { moderationMessage != nil },

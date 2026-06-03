@@ -12,9 +12,11 @@ struct OnboardingView: View {
 
     @State private var currentPage = 0
     @State private var nameInput = ""
+    @State private var showNotificationPriming = false
     @Environment(AuthService.self) private var auth
     @Environment(Router.self) private var router
     @Environment(HapticService.self) private var haptics
+    @Environment(NotificationService.self) private var notifications
 
     private let pages: [OnboardingPage] = [
         OnboardingPage(
@@ -41,6 +43,16 @@ struct OnboardingView: View {
         ZStack {
             Color.smvBackground.ignoresSafeArea()
 
+            if showNotificationPriming {
+                notificationPriming
+            } else {
+                onboardingPages
+            }
+        }
+    }
+
+    private var onboardingPages: some View {
+        ZStack {
             VStack(spacing: 0) {
                 // Skip button
                 HStack {
@@ -144,8 +156,9 @@ struct OnboardingView: View {
                                     Task {
                                         await auth.signInAnonymouslyWithName(trimmed)
                                         if auth.currentUserId != nil {
-                                            auth.completeOnboarding()
-                                            router.dismiss()
+                                            withAnimation(.spring(duration: 0.4)) {
+                                                showNotificationPriming = true
+                                            }
                                         }
                                     }
                                 }
@@ -176,6 +189,62 @@ struct OnboardingView: View {
                 .padding(.horizontal, SMVSpacing.xxl)
                 .padding(.bottom, SMVSpacing.huge)
             }
+        }
+    }
+
+    // MARK: - Notification Priming
+
+    private var notificationPriming: some View {
+        VStack(spacing: SMVSpacing.xxl) {
+            Spacer()
+
+            ZStack {
+                Circle()
+                    .fill(LinearGradient(colors: [.smvViolet, .smvCyan], startPoint: .topLeading, endPoint: .bottomTrailing).opacity(0.15))
+                    .frame(width: 160, height: 160)
+                Image(systemName: "bell.badge.fill")
+                    .font(.system(size: 56, weight: .medium))
+                    .foregroundStyle(LinearGradient(colors: [.smvViolet, .smvCyan], startPoint: .topLeading, endPoint: .bottomTrailing))
+            }
+
+            VStack(spacing: SMVSpacing.md) {
+                Text("Never miss a moment")
+                    .font(SMVFont.displayMedium())
+                    .foregroundStyle(.white)
+                    .multilineTextAlignment(.center)
+
+                Text("Get the ⚡ daily SMV drop, know when people vote on you, and keep your streak alive.")
+                    .font(SMVFont.body())
+                    .foregroundStyle(Color.smvTextSecondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, SMVSpacing.xxl)
+            }
+
+            Spacer()
+
+            VStack(spacing: SMVSpacing.md) {
+                GradientButton(title: "Enable Notifications", icon: "bell.fill") {
+                    haptics.mediumImpact()
+                    finishOnboarding(enableNotifications: true)
+                }
+                Button("Not now") {
+                    finishOnboarding(enableNotifications: false)
+                }
+                .font(SMVFont.caption())
+                .foregroundStyle(Color.smvTextTertiary)
+            }
+            .padding(.horizontal, SMVSpacing.xxl)
+            .padding(.bottom, SMVSpacing.huge)
+        }
+    }
+
+    private func finishOnboarding(enableNotifications: Bool) {
+        Task {
+            if enableNotifications {
+                await notifications.requestPermission()
+            }
+            auth.completeOnboarding()
+            router.dismiss()
         }
     }
 
@@ -247,4 +316,5 @@ private struct OnboardingPage {
         .environment(AuthService())
         .environment(Router())
         .environment(HapticService())
+        .environment(NotificationService())
 }

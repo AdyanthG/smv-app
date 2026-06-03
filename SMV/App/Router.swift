@@ -136,4 +136,34 @@ final class Router {
         presentedSheet = nil
         presentedFullScreen = nil
     }
+
+    // MARK: - Notification Deep Links
+
+    /// Route to the right place from a notification (push tap or in-app row).
+    func handleNotification(type: String, postId: String? = nil, userId: String? = nil, tab: String? = nil) {
+        presentedSheet = nil
+        presentedFullScreen = nil
+        navigationPath = NavigationPath() // start from a clean stack
+
+        switch type {
+        case "like", "comment":
+            selectedTab = .feed
+            if let postId { navigationPath.append(Destination.postDetail(postId: postId)) }
+        case "follow":
+            if let userId { navigationPath.append(Destination.userProfile(userId: userId)) }
+        case "vote_milestone", "vote_recap":
+            selectedTab = .leaderboard
+        case "daily_scan", "smv_drop", "streak", "dormant":
+            selectedTab = .scan
+        default:
+            switch tab {
+            case "feed":        selectedTab = .feed
+            case "leaderboard": selectedTab = .leaderboard
+            case "scan":        selectedTab = .scan
+            case "vote":        selectedTab = .vote
+            case "profile":     selectedTab = .profile
+            default:            break
+            }
+        }
+    }
 }

@@ -479,23 +479,28 @@ final class FirestoreService {
 
     // MARK: - Comments
 
+    /// Save a comment using a caller-provided ID (matches the local SwiftData
+    /// comment) so local and remote copies dedupe instead of double-appearing.
     func saveComment(
+        id: String,
         postId: String,
         authorId: String,
         authorName: String,
+        authorHandle: String = "",
         body: String
     ) async {
         let data: [String: Any] = [
             "postId": postId,
             "authorId": authorId,
             "authorName": authorName,
+            "authorHandle": authorHandle,
             "body": body,
             "createdAt": FieldValue.serverTimestamp(),
         ]
 
         do {
             try await db.collection("posts").document(postId)
-                .collection("comments").addDocument(data: data)
+                .collection("comments").document(id).setData(data)
             // Increment comment count on post
             try await db.collection("posts").document(postId).updateData([
                 "commentCount": FieldValue.increment(Int64(1))
@@ -809,6 +814,53 @@ final class FirestoreService {
             return (followers, following)
         } catch {
             return (0, 0)
+        }
+    }
+
+    // MARK: - In-App Notifications
+
+    /// Fetch the user's in-app notification feed (newest first, sorted in memory).
+    func fetchNotifications(userId: String, limit: Int = 50) async -> [[String: Any]] {
+        do {
+            let snapshot = try await db.collection("users").document(userId)
+                .collection("notifications").getDocuments()
+            return snapshot.documents.map { doc -> [String: Any] in
+                var data = doc.data()
+                data["id"] = doc.documentID
+                return data
+            }.sorted { a, b in
+                let at = (a["createdAt"] as? Timestamp)?.dateValue() ?? .distantPast
+                let bt = (b["createdAt"] as? Timestamp)?.dateValue() ?? .distantPast
+                return at > bt
+            }.prefix(limit).map { $0 }
+        } catch {
+            return []
+        }
+    }
+
+    /// Count unread notifications (for a tab badge).
+    func unreadNotificationCount(userId: String) async -> Int {
+        do {
+            let snapshot = try await db.collection("users").document(userId)
+                .collection("notifications").whereField("read", isEqualTo: false).getDocuments()
+            return snapshot.documents.count
+        } catch {
+            return 0
+        }
+    }
+
+    /// Mark all of the user's notifications as read.
+    func markNotificationsRead(userId: String) async {
+        do {
+            let snapshot = try await db.collection("users").document(userId)
+                .collection("notifications").whereField("read", isEqualTo: false).getDocuments()
+            let batch = db.batch()
+            for doc in snapshot.documents {
+                batch.updateData(["read": true], forDocument: doc.reference)
+            }
+            try await batch.commit()
+        } catch {
+            errorMessage = error.localizedDescription
         }
     }
 

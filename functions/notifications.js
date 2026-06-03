@@ -42,12 +42,16 @@ async function sendToUser(uid, { title, body, data = {}, logInApp = false }) {
       apns: { payload: { aps: { sound: "default", badge: 1 } } },
     });
 
-    // Mirror personal notifications into an in-app feed.
+    // Mirror personal notifications into an in-app feed (with deep-link ids).
     if (logInApp) {
-      await db.collection("users").doc(uid).collection("notifications").add({
+      const entry = {
         title, body, type: data.type || "general", read: false,
         createdAt: FieldValue.serverTimestamp(),
-      });
+      };
+      if (data.postId) entry.postId = data.postId;
+      if (data.userId) entry.userId = data.userId;
+      if (data.tab) entry.tab = data.tab;
+      await db.collection("users").doc(uid).collection("notifications").add(entry);
     }
     return true;
   } catch (e) {

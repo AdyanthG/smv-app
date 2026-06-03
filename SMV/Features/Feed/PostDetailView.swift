@@ -27,6 +27,7 @@ struct PostDetailView: View {
     @State private var likeCount = 0
     @State private var remotePost: Post?
     @State private var remoteComments: [Comment] = []
+    @State private var showShareSheet = false
 
     private var post: Post? {
         allPosts.first { $0.id == postId } ?? remotePost
@@ -121,6 +122,10 @@ struct PostDetailView: View {
         }
         .task {
             await loadPost()
+        }
+        .sheet(isPresented: $showShareSheet) {
+            ShareSheet(items: [shareText])
+                .presentationDetents([.medium])
         }
     }
 
@@ -250,22 +255,47 @@ struct PostDetailView: View {
                 Spacer()
             }
 
-            // Scan image
+            // Scan image — full face (no crop), tappable into the 5-angle gallery
             if let urlStr = post.imageURL, let url = URL(string: urlStr) {
-                CachedAsyncImage(url: url) { image in
-                    image
-                        .resizable()
-                        .scaledToFill()
-                } placeholder: {
-                    RoundedRectangle(cornerRadius: SMVRadius.md)
-                        .fill(Color.smvSurface1)
-                        .frame(height: 280)
-                        .overlay(ProgressView().tint(Color.smvCyan))
+                Button {
+                    if let scanId = post.scanResultId {
+                        router.present(.scanGallery(
+                            userId: post.authorId,
+                            displayName: post.authorName,
+                            scanId: scanId
+                        ))
+                    }
+                } label: {
+                    CachedAsyncImage(url: url) { image in
+                        image
+                            .resizable()
+                            .scaledToFit()
+                    } placeholder: {
+                        RoundedRectangle(cornerRadius: SMVRadius.md)
+                            .fill(Color.smvSurface1)
+                            .frame(height: 280)
+                            .overlay(ProgressView().tint(Color.smvCyan))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .frame(maxHeight: 440)
+                    .background(Color.smvSurface1)
+                    .clipShape(RoundedRectangle(cornerRadius: SMVRadius.md))
+                    .overlay(alignment: .bottomTrailing) {
+                        if post.scanResultId != nil {
+                            HStack(spacing: 4) {
+                                Image(systemName: "square.stack.3d.up.fill").font(.system(size: 10))
+                                Text("All angles").font(SMVFont.micro())
+                            }
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, SMVSpacing.sm)
+                            .padding(.vertical, 4)
+                            .background(Capsule().fill(.black.opacity(0.5)))
+                            .padding(SMVSpacing.sm)
+                        }
+                    }
                 }
-                .frame(maxWidth: .infinity)
-                .frame(height: 320)
-                .clipped()
-                .clipShape(RoundedRectangle(cornerRadius: SMVRadius.md))
+                .buttonStyle(.plain)
+                .disabled(post.scanResultId == nil)
             }
 
             // Caption
@@ -349,7 +379,8 @@ struct PostDetailView: View {
 
             // Share
             Button {
-                // TODO: Share sheet
+                haptics.lightImpact()
+                showShareSheet = true
             } label: {
                 Image(systemName: "square.and.arrow.up")
                     .foregroundStyle(Color.smvTextSecondary)
@@ -357,6 +388,12 @@ struct PostDetailView: View {
         }
         .padding(.horizontal, SMVSpacing.lg)
         .padding(.vertical, SMVSpacing.md)
+    }
+
+    private var shareText: String {
+        guard let post else { return "Check out SMV — Know Your Edge." }
+        let caption = post.caption.isEmpty ? "Check out their scan on SMV." : post.caption
+        return "\(post.authorName) on SMV: \(caption)"
     }
 
     // MARK: - Comment Row
@@ -438,11 +475,14 @@ struct PostDetailView: View {
         guard !commentText.isEmpty else { return }
         haptics.mediumImpact()
 
+        let authorHandle = UserDefaults.standard.string(forKey: "smv_handle") ?? "user"
+        let authorName = auth.displayName.isEmpty ? "You" : auth.displayName
+        let authorId = auth.currentUserId ?? "guest"
         let comment = Comment(
             postId: postId,
-            authorId: auth.currentUserId ?? "guest",
-            authorName: auth.displayName.isEmpty ? "You" : auth.displayName,
-            authorHandle: UserDefaults.standard.string(forKey: "smv_handle") ?? "user",
+            authorId: authorId,
+            authorName: authorName,
+            authorHandle: authorHandle,
             body: commentText
         )
         modelContext.insert(comment)
@@ -452,13 +492,16 @@ struct PostDetailView: View {
             post.commentCount += 1
         }
 
-        // Also save to Firestore
+        // Save to Firestore with the SAME id so it dedupes with the local copy.
+        let body = commentText
         Task {
             await firestore.saveComment(
+                id: comment.id,
                 postId: postId,
-                authorId: auth.currentUserId ?? "guest",
-                authorName: auth.displayName.isEmpty ? "You" : auth.displayName,
-                body: commentText
+                authorId: authorId,
+                authorName: authorName,
+                authorHandle: authorHandle,
+                body: body
             )
         }
 

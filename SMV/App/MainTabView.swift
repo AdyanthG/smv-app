@@ -82,6 +82,15 @@ struct MainTabView: View {
                 OnboardingView()
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .smvNotificationTapped)) { note in
+            let info = note.userInfo
+            router.handleNotification(
+                type: info?["type"] as? String ?? "",
+                postId: info?["postId"] as? String,
+                userId: info?["userId"] as? String,
+                tab: info?["tab"] as? String
+            )
+        }
     }
 }
 
