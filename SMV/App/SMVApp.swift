@@ -134,6 +134,13 @@ struct SMVApp: App {
                         await notifications.registerToken(userId: userId, firestore: firestore)
                     }
                 }
+                .onChange(of: notifications.fcmToken) {
+                    // The FCM token arrives asynchronously (and can rotate) — persist
+                    // it whenever it changes so push delivery has a current token.
+                    if let userId = auth.currentUserId {
+                        Task { await notifications.registerToken(userId: userId, firestore: firestore) }
+                    }
+                }
                 .onAppear {
                     // Show onboarding/sign-in if not authenticated
                     if !auth.isOnboarded {
@@ -141,9 +148,15 @@ struct SMVApp: App {
                     }
                 }
                 .onChange(of: auth.state) { _, newState in
-                    // If user signs out, show onboarding again
-                    if case .signedOut = newState {
+                    switch newState {
+                    case .signedIn(let userId):
+                        // Register the FCM token against the signed-in account.
+                        Task { await notifications.registerToken(userId: userId, firestore: firestore) }
+                    case .signedOut:
+                        // Show onboarding again on sign-out.
                         router.presentFullScreen(.onboarding)
+                    case .unknown:
+                        break
                     }
                 }
         }

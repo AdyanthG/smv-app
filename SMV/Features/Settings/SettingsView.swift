@@ -15,6 +15,7 @@ struct SettingsView: View {
     @Environment(HapticService.self) private var haptics
     @Environment(FirestoreService.self) private var firestore
     @Environment(SubscriptionManager.self) private var subscriptions
+    @Environment(NotificationService.self) private var notifications
     @Environment(\.modelContext) private var modelContext
     @Environment(\.openURL) private var openURL
     @State private var showDeleteConfirmation = false
@@ -94,6 +95,10 @@ struct SettingsView: View {
                     UserDefaults.standard.set(newValue, forKey: "smv_notificationsEnabled")
                     if let userId = auth.currentUserId {
                         Task { await firestore.setNotificationsEnabled(userId: userId, enabled: newValue) }
+                    }
+                    // Turning it on with no system permission yet → ask for it.
+                    if newValue && !notifications.isPermissionGranted {
+                        Task { await notifications.requestPermission() }
                     }
                 }
 

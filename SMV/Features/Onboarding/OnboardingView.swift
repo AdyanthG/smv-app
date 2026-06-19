@@ -104,8 +104,9 @@ struct OnboardingView: View {
                                     Task {
                                         await auth.handleAppleSignIn(result: result)
                                         if auth.currentUserId != nil {
-                                            auth.completeOnboarding()
-                                            router.dismiss()
+                                            withAnimation(.spring(duration: 0.4)) {
+                                                showNotificationPriming = true
+                                            }
                                         }
                                     }
                                 }
