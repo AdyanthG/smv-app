@@ -52,6 +52,13 @@ service cloud.firestore {
       }
     }
 
+    // ── Apple auth codes (Sign in with Apple revocation) ──
+    match /appleAuthCodes/{userId} {
+      // The user drops their short-lived code here; a Cloud Function consumes it.
+      allow create: if isOwner(userId);
+      allow read, update, delete: if false;
+    }
+
     // ── Reports Collection (content moderation) ──
     match /reports/{reportId} {
       // Any signed-in user can file a report; only the reporter is recorded.

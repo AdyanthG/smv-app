@@ -25,11 +25,9 @@ enum AuthState: Equatable {
 @Observable
 final class AuthService {
 
-    /// Sign in with Apple requires the "Sign in with Apple" capability, which
-    /// requires a paid Apple Developer Program membership. Flip this to `true`
-    /// after adding the capability in Xcode (Signing & Capabilities) — the full
-    /// implementation below (`prepareNonce` / `handleAppleSignIn`) is ready.
-    static let appleSignInAvailable = false
+    /// Sign in with Apple. Requires the "Sign in with Apple" capability added in
+    /// Xcode (Signing & Capabilities). Enabled now that the membership is active.
+    static let appleSignInAvailable = true
 
     var state: AuthState = .unknown
     var currentUserId: String? {
@@ -187,11 +185,23 @@ final class AuthService {
                     "email": email,
                     "isProfilePublic": true,
                     "notificationsEnabled": true,
+                    "authProvider": "apple",
                     "followerCount": 0,
                     "followingCount": 0,
                     "createdAt": FieldValue.serverTimestamp(),
                     "updatedAt": FieldValue.serverTimestamp(),
                 ], merge: true)
+
+                // Hand the short-lived authorization code to the backend so it can
+                // mint a refresh token now and revoke it on account deletion
+                // (required by Apple for apps offering Sign in with Apple).
+                if let codeData = appleIDCredential.authorizationCode,
+                   let code = String(data: codeData, encoding: .utf8) {
+                    try? await db.collection("appleAuthCodes").document(userId).setData([
+                        "code": code,
+                        "createdAt": FieldValue.serverTimestamp(),
+                    ])
+                }
 
                 state = .signedIn(userId: userId)
             } catch {

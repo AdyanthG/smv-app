@@ -11,6 +11,10 @@ const FieldValue = admin.firestore.FieldValue;
 // Push-notification functions (social triggers + scheduled engagement/FOMO).
 Object.assign(exports, require("./notifications"));
 
+// Sign in with Apple token exchange/revocation.
+const apple = require("./apple");
+exports.exchangeAppleAuthCode = apple.exchangeAppleAuthCode;
+
 /**
  * Full account-deletion cleanup.
  *
@@ -30,6 +34,17 @@ exports.cleanupDeletedUser = functions
     const uid = user.uid;
     const userRef = db.collection("users").doc(uid);
     console.log(`[cleanupDeletedUser] starting cleanup for ${uid}`);
+
+    // 0) Revoke the Apple refresh token (required for Sign in with Apple),
+    //    reading it before the user document is deleted.
+    try {
+      const userData = (await userRef.get()).data() || {};
+      if (userData.appleRefreshToken) {
+        await apple.revokeAppleToken(userData.appleRefreshToken);
+      }
+    } catch (e) {
+      console.error("[cleanupDeletedUser] apple revoke failed", e.message);
+    }
 
     // 1) Reciprocal follow cleanup — decrement counts and remove the mirror docs
     //    on the other side of every follow edge. Read BEFORE deleting the user.
