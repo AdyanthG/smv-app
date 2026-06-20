@@ -17,6 +17,7 @@ struct ResultsView: View {
     @Environment(AuthService.self) private var auth
     @Environment(HapticService.self) private var haptics
     @Environment(FirestoreService.self) private var firestore
+    @Environment(SubscriptionManager.self) private var subs
 
     var body: some View {
         ScrollView {
@@ -36,6 +37,9 @@ struct ResultsView: View {
 
                     // Attribute Breakdown
                     attributeSection(result)
+
+                    // Biometric details (Pro)
+                    biometricsSection(result)
 
                     // Actions
                     actionButtons(result)
@@ -214,6 +218,94 @@ struct ResultsView: View {
         }
     }
 
+    // MARK: - Biometric Details (Pro)
+
+    private func biometricsSection(_ result: ScanResult) -> some View {
+        VStack(alignment: .leading, spacing: SMVSpacing.lg) {
+            HStack {
+                Text("Biometric Details")
+                    .font(SMVFont.headline())
+                    .foregroundStyle(.white)
+                Spacer()
+                Text("PRO")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(Color.smvAmber)
+                    .padding(.horizontal, 6).padding(.vertical, 2)
+                    .background(Capsule().fill(Color.smvAmber.opacity(0.15)))
+            }
+
+            if subs.isPro {
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: SMVSpacing.md), GridItem(.flexible(), spacing: SMVSpacing.md)], spacing: SMVSpacing.md) {
+                    ForEach(metrics(result)) { metric in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(metric.name)
+                                .font(SMVFont.micro())
+                                .foregroundStyle(Color.smvTextTertiary)
+                            Text(metric.value)
+                                .font(SMVFont.title())
+                                .fontDesign(.rounded)
+                                .foregroundStyle(.white)
+                            if let ideal = metric.ideal {
+                                Text("ideal \(ideal)")
+                                    .font(SMVFont.micro())
+                                    .foregroundStyle(Color.smvCyan)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(SMVSpacing.md)
+                        .background(RoundedRectangle(cornerRadius: SMVRadius.md).fill(Color.smvSurface0))
+                    }
+                }
+            } else {
+                Button {
+                    haptics.lightImpact()
+                    router.present(.paywall)
+                } label: {
+                    VStack(spacing: SMVSpacing.md) {
+                        Image(systemName: "lock.fill")
+                            .font(.system(size: 26))
+                            .foregroundStyle(Color.smvAmber)
+                        Text("Unlock your full biometric breakdown")
+                            .font(SMVFont.body())
+                            .foregroundStyle(.white)
+                        Text("FWHR, canthal tilt, gonial angle, facial thirds & more — the exact PSL measurements.")
+                            .font(SMVFont.caption())
+                            .foregroundStyle(Color.smvTextSecondary)
+                            .multilineTextAlignment(.center)
+                        Text("Upgrade to Pro →")
+                            .font(SMVFont.caption())
+                            .fontWeight(.bold)
+                            .foregroundStyle(Color.smvAmber)
+                            .padding(.top, 2)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(SMVSpacing.xl)
+                    .background(
+                        RoundedRectangle(cornerRadius: SMVRadius.lg)
+                            .fill(Color.smvSurface0)
+                            .overlay(RoundedRectangle(cornerRadius: SMVRadius.lg).stroke(Color.smvAmber.opacity(0.3), lineWidth: 1))
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private func metrics(_ r: ScanResult) -> [BioMetric] {
+        [
+            BioMetric(name: "FWHR", value: String(format: "%.2f", r.fwhr), ideal: "1.90"),
+            BioMetric(name: "Canthal Tilt", value: String(format: "%.1f°", r.canthalTiltDegrees), ideal: "+5°"),
+            BioMetric(name: "Gonial Angle", value: String(format: "%.0f°", r.gonialAngleDegrees), ideal: "120°"),
+            BioMetric(name: "Facial Thirds", value: String(format: "%.1f%%", r.facialThirdsDeviation * 100), ideal: "<5%"),
+            BioMetric(name: "IPD Ratio", value: String(format: "%.2f", r.ipdRatio), ideal: "0.46"),
+            BioMetric(name: "Symmetry", value: String(format: "%.0f%%", r.rawSymmetry * 100), ideal: "100%"),
+            BioMetric(name: "Eye Aspect", value: String(format: "%.2f", r.eyeAspectRatio), ideal: nil),
+            BioMetric(name: "Nose Width", value: String(format: "%.2f", r.noseWidthRatio), ideal: nil),
+            BioMetric(name: "Lip Ratio", value: String(format: "%.2f", r.lipRatio), ideal: nil),
+            BioMetric(name: "Philtrum", value: String(format: "%.2f", r.philtrumRatio), ideal: nil),
+        ]
+    }
+
     // MARK: - Actions
 
     private func actionButtons(_ result: ScanResult) -> some View {
@@ -311,6 +403,13 @@ private struct ScanAngle: Identifiable {
     var id: String { label }
 }
 
+private struct BioMetric: Identifiable {
+    let name: String
+    let value: String
+    let ideal: String?
+    var id: String { name }
+}
+
 // MARK: - Share Sheet
 
 struct ShareSheet: UIViewControllerRepresentable {
@@ -331,4 +430,5 @@ struct ShareSheet: UIViewControllerRepresentable {
     .environment(HapticService())
     .environment(AuthService())
     .environment(FirestoreService())
+    .environment(SubscriptionManager())
 }

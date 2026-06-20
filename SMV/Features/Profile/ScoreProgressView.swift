@@ -11,35 +11,33 @@ import SwiftData
 
 struct ScoreProgressView: View {
 
-    @Query(sort: \ScanResult.timestamp) private var scanResults: [ScanResult]
+    @Environment(AuthService.self) private var auth
+    @Query(sort: \ScanResult.timestamp) private var allResults: [ScanResult]
+
+    private var scanResults: [ScanResult] {
+        guard let uid = auth.currentUserId else { return allResults }
+        return allResults.filter { $0.userId == uid }
+    }
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(spacing: SMVSpacing.xxl) {
-                    if scanResults.isEmpty {
-                        emptyState
-                    } else {
-                        // Summary header
-                        summaryHeader
-
-                        // Score chart
-                        scoreChart
-
-                        // Per-attribute trends
-                        attributeTrends
-
-                        // Scan history list
-                        scanHistoryList
-                    }
+        ScrollView {
+            VStack(spacing: SMVSpacing.xxl) {
+                if scanResults.isEmpty {
+                    emptyState
+                } else {
+                    summaryHeader
+                    scoreChart
+                    attributeTrends
+                    scanHistoryList
                 }
-                .padding(.horizontal, SMVSpacing.xxl)
-                .padding(.top, SMVSpacing.xxl)
             }
-            .background(Color.smvBackground)
-            .navigationTitle("Progress")
-            .navigationBarTitleDisplayMode(.inline)
+            .padding(.horizontal, SMVSpacing.xxl)
+            .padding(.top, SMVSpacing.xxl)
         }
+        .background(Color.smvBackground)
+        .navigationTitle("Progress")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbarColorScheme(.dark, for: .navigationBar)
     }
 
     // MARK: - Summary

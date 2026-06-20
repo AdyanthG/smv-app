@@ -70,6 +70,7 @@ final class Router {
         case communityGuidelines
         case scanHistory
         case scanDetail(userId: String, scanId: String)
+        case coach
     }
 
     // ── Modal Sheets ──

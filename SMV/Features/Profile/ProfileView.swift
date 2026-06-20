@@ -13,6 +13,7 @@ struct ProfileView: View {
     @Environment(Router.self) private var router
     @Environment(AuthService.self) private var auth
     @Environment(FirestoreService.self) private var firestore
+    @Environment(SubscriptionManager.self) private var subs
     @Query(sort: \ScanResult.timestamp, order: .reverse) private var allScans: [ScanResult]
     @State private var streak: Int = 0
 
@@ -47,6 +48,7 @@ struct ProfileView: View {
                 VStack(spacing: SMVSpacing.xxl) {
                     heroSection
                     latestScanCard
+                    coachCard
                     scanHistoryGrid
                 }
                 .padding(.bottom, 100)
@@ -121,6 +123,56 @@ struct ProfileView: View {
                 .font(SMVFont.micro())
                 .foregroundStyle(Color.smvTextTertiary)
         }
+    }
+
+    // MARK: - Coach Card
+
+    private var coachCard: some View {
+        Button {
+            router.push(.coach)
+        } label: {
+            HStack(spacing: SMVSpacing.md) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: SMVRadius.md)
+                        .fill(LinearGradient(colors: [.smvAmber.opacity(0.25), .smvViolet.opacity(0.25)], startPoint: .topLeading, endPoint: .bottomTrailing))
+                        .frame(width: 48, height: 48)
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 20))
+                        .foregroundStyle(Color.smvAmber)
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: SMVSpacing.sm) {
+                        Text("AI Coach")
+                            .font(SMVFont.title())
+                            .foregroundStyle(.white)
+                        Text("ELITE")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(Color.smvAmber)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Capsule().fill(Color.smvAmber.opacity(0.15)))
+                    }
+                    Text("Your personalized improvement plan")
+                        .font(SMVFont.micro())
+                        .foregroundStyle(Color.smvTextTertiary)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 13))
+                    .foregroundStyle(Color.smvTextTertiary)
+            }
+            .padding(SMVSpacing.lg)
+            .background(
+                RoundedRectangle(cornerRadius: SMVRadius.lg)
+                    .fill(Color.smvSurface0)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: SMVRadius.lg)
+                            .stroke(LinearGradient(colors: [.smvAmber.opacity(0.4), .smvViolet.opacity(0.4)], startPoint: .leading, endPoint: .trailing), lineWidth: 1)
+                    )
+            )
+            .padding(.horizontal, SMVSpacing.lg)
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Latest Scan Card
@@ -226,6 +278,19 @@ struct ProfileView: View {
                     .font(SMVFont.title())
                     .foregroundStyle(.white)
                 Spacer()
+                Button {
+                    if subs.isPro { router.push(.progress) } else { router.present(.paywall) }
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: "chart.line.uptrend.xyaxis").font(.system(size: 11))
+                        Text("Trends")
+                        if !subs.isPro {
+                            Image(systemName: "lock.fill").font(.system(size: 9))
+                        }
+                    }
+                    .font(SMVFont.micro())
+                    .foregroundStyle(subs.isPro ? Color.smvCyan : Color.smvAmber)
+                }
                 if scans.count > 6 {
                     Button("View All") {
                         router.push(.scanHistory)

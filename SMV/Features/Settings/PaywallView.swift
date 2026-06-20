@@ -42,7 +42,7 @@ struct PaywallView: View {
                             .multilineTextAlignment(.center)
                             .foregroundStyle(.white)
 
-                        Text("Get unlimited scans, detailed analytics, and access the full community.")
+                        Text("Unlock your full biometric breakdown, progress tracking, and a personal AI coach.")
                             .font(SMVFont.body())
                             .foregroundStyle(Color.smvTextSecondary)
                             .multilineTextAlignment(.center)
@@ -116,13 +116,11 @@ struct PaywallView: View {
                 .padding(.bottom, SMVSpacing.sm)
 
             featureRow(icon: "bolt.fill", text: "Face Scans", free: "∞", pro: "∞")
-            featureRow(icon: "chart.bar.fill", text: "Score Breakdown", free: "Overall", pro: "Full Detail")
+            featureRow(icon: "chart.bar.fill", text: "Score & Radar Breakdown", free: "✓", pro: "✓")
+            featureRow(icon: "trophy.fill", text: "Leaderboards & Voting", free: "✓", pro: "✓")
+            featureRow(icon: "ruler.fill", text: "Biometric Details", free: "—", pro: "✓")
             featureRow(icon: "chart.line.uptrend.xyaxis", text: "Progress Trends", free: "—", pro: "✓")
-            featureRow(icon: "arrow.left.and.right", text: "Before/After", free: "—", pro: "✓")
-            featureRow(icon: "person.2.fill", text: "Improvement Tips", free: "Basic", pro: "Personalized")
-            featureRow(icon: "square.and.arrow.up", text: "Share Cards", free: "Watermark", pro: "Clean")
-            featureRow(icon: "crown.fill", text: "Pro Badge", free: "—", pro: "✓")
-            featureRow(icon: "sparkles", text: "AI Coach", free: "—", pro: "Elite Only")
+            featureRow(icon: "sparkles", text: "AI Coach", free: "—", pro: "Elite")
         }
     }
 
@@ -176,7 +174,7 @@ struct PaywallView: View {
                             .font(SMVFont.title())
                             .foregroundStyle(.white)
                         if plan == .proYearly {
-                            Text("SAVE 40%")
+                            Text("BEST VALUE")
                                 .font(SMVFont.micro())
                                 .foregroundStyle(Color.smvEmerald)
                                 .padding(.horizontal, 6)
@@ -192,7 +190,9 @@ struct PaywallView: View {
                 Spacer()
 
                 VStack(alignment: .trailing, spacing: 2) {
-                    Text(plan.price)
+                    // Use the real App Store price; fall back to a placeholder
+                    // only until products load.
+                    Text(subs.products.first(where: { $0.id == plan.productId })?.displayPrice ?? plan.price)
                         .font(SMVFont.headline())
                         .foregroundStyle(.white)
                     Text(plan.period)
@@ -236,17 +236,18 @@ enum PlanOption: String, CaseIterable, Identifiable {
 
     var subtitle: String {
         switch self {
-        case .proMonthly: return "Unlimited scans + full analytics"
-        case .proYearly: return "Best value — everything in Pro"
-        case .elite: return "Pro + AI Coach + exclusive perks"
+        case .proMonthly: return "Biometric details + progress trends"
+        case .proYearly: return "Everything in Pro — best value"
+        case .elite: return "Pro + your personal AI Coach"
         }
     }
 
+    // Fallback only — the real price comes from StoreKit (see planCard).
     var price: String {
         switch self {
-        case .proMonthly: return "$4.99"
-        case .proYearly: return "$34.99"
-        case .elite: return "$9.99"
+        case .proMonthly: return "$9.99"
+        case .proYearly: return "$39.99"
+        case .elite: return "$19.99"
         }
     }
 

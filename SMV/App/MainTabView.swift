@@ -49,6 +49,8 @@ struct MainTabView: View {
                             ScanHistoryView()
                         case .scanDetail(_, let scanId):
                             ResultsView(scanId: scanId)
+                        case .coach:
+                            CoachView()
                         }
                     }
             }
