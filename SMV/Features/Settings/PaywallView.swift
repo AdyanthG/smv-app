@@ -62,13 +62,23 @@ struct PaywallView: View {
                     ) {
                         haptics.mediumImpact()
                         Task {
-                            if let product = subs.products.first(where: {
+                            guard let product = subs.products.first(where: {
                                 $0.id == selectedPlan.productId
-                            }) {
-                                await subs.purchase(product)
-                                if subs.isPro { dismiss() }
-                            }
+                            }) else { return }
+                            await subs.purchase(product)
+                            // Dismiss only if the plan they actually selected is now active
+                            // (an existing Pro user upgrading to Elite is already isPro).
+                            let unlocked = selectedPlan == .elite ? subs.isElite : subs.isPro
+                            if unlocked { dismiss() }
                         }
+                    }
+
+                    // Surface purchase errors (incl. "Purchase pending approval")
+                    if let error = subs.purchaseError {
+                        Text(error)
+                            .font(SMVFont.micro())
+                            .foregroundStyle(Color.smvPink)
+                            .multilineTextAlignment(.center)
                     }
 
                     // Legal

@@ -9,6 +9,7 @@
 import StoreKit
 import SwiftUI
 
+@MainActor
 @Observable
 final class SubscriptionManager {
 
@@ -32,6 +33,29 @@ final class SubscriptionManager {
     static let proMonthlyId = "smv.pro.monthly"
     static let proYearlyId = "smv.pro.yearly"
     static let eliteMonthlyId = "smv.elite.monthly"
+
+    // Long-lived listener for transactions that arrive outside the direct
+    // purchase() flow (renewals, refunds/revocations, Ask-to-Buy approvals,
+    // cross-device and Store-initiated purchases). StoreKit 2 delivers these
+    // only via Transaction.updates, so without this the tier would go stale
+    // mid-session until the next cold launch.
+    nonisolated(unsafe) private var updatesTask: Task<Void, Never>?
+
+    init() {
+        updatesTask = Task { [weak self] in
+            for await result in Transaction.updates {
+                guard let self else { continue }
+                if let transaction = try? self.checkVerified(result) {
+                    await self.updateSubscriptionStatus()
+                    await transaction.finish()
+                }
+            }
+        }
+    }
+
+    deinit {
+        updatesTask?.cancel()
+    }
 
     // MARK: - Load Products
 
