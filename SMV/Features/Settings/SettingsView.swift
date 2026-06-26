@@ -293,7 +293,7 @@ struct SettingsView: View {
 
     private func composeEmail(subject: String) {
         let encoded = subject.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? subject
-        if let url = URL(string: "mailto:support@smvapp.com?subject=\(encoded)") {
+        if let url = URL(string: "mailto:adyanthganesh@gmail.com?subject=\(encoded)") {
             openURL(url)
         }
     }
